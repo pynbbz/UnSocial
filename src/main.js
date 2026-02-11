@@ -6,9 +6,60 @@ const { startFeedServer, stopFeedServer } = require('./feed-server');
 
 // Force a consistent userData path so data persists across exe replacements.
 // For portable builds, electron-builder sets PORTABLE_EXECUTABLE_DIR.
+// IMPORTANT: Must NOT be the same as portable.unpackDirName ('UnSocial-data')
+// because the portable launcher wipes that directory on update.
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 if (portableDir) {
-  app.setPath('userData', path.join(portableDir, 'UnSocial-data'));
+  const newUserData = path.join(portableDir, 'UnSocial-userdata');
+  const oldUserData = path.join(portableDir, 'UnSocial-data');
+
+  // One-time migration: copy persisted data from the old location
+  if (!fs.existsSync(newUserData) && fs.existsSync(oldUserData)) {
+    try {
+      fs.mkdirSync(newUserData, { recursive: true });
+      // Copy electron-store config
+      const oldConfig = path.join(oldUserData, 'config.json');
+      if (fs.existsSync(oldConfig)) {
+        fs.copyFileSync(oldConfig, path.join(newUserData, 'config.json'));
+      }
+      // Copy Local Storage, Session Storage, feeds (directories)
+      const dirsToCopy = ['Local Storage', 'Session Storage', 'feeds', 'GPUCache', 'Network'];
+      for (const dir of dirsToCopy) {
+        const src = path.join(oldUserData, dir);
+        if (fs.existsSync(src) && fs.statSync(src).isDirectory()) {
+          copyDirSync(src, path.join(newUserData, dir));
+        }
+      }
+      // Copy cookie-related files and other Chromium DB files at root level
+      const filesToCopy = ['Cookies', 'Cookies-journal', 'Preferences', 'Local State',
+                           'TransportSecurity', 'Trust Tokens', 'QuotaManager',
+                           'QuotaManager-journal', 'DIPS'];
+      for (const f of filesToCopy) {
+        const src = path.join(oldUserData, f);
+        if (fs.existsSync(src) && !fs.statSync(src).isDirectory()) {
+          fs.copyFileSync(src, path.join(newUserData, f));
+        }
+      }
+      console.log('[Migration] Copied user data from UnSocial-data → UnSocial-userdata');
+    } catch (err) {
+      console.error('[Migration] Failed to migrate old data:', err.message);
+    }
+  }
+
+  app.setPath('userData', newUserData);
+}
+
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
 }
 // ── Single Instance Lock ───────────────────────────────────────────────────
 const gotTheLock = app.requestSingleInstanceLock();
@@ -268,8 +319,9 @@ async function refreshOldestFeed() {
     if (idx !== -1) {
       currentFeeds[idx].lastChecked = new Date().toISOString();
       currentFeeds[idx].postCount = profileData.posts.length;
-      currentFeeds[idx].latestPostDate = profileData.posts.length > 0
-        ? new Date(Math.max(...profileData.posts.map(p => new Date(p.timestamp || 0).getTime()))).toISOString()
+      const realPosts = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+      currentFeeds[idx].latestPostDate = realPosts.length > 0
+        ? new Date(Math.max(...realPosts.map(p => new Date(p.timestamp).getTime()))).toISOString()
         : currentFeeds[idx].latestPostDate || null;
       store.set('feeds', currentFeeds);
     }
@@ -344,6 +396,9 @@ app.whenReady().then(async () => {
 
   // Auto-start tunnel — run through full setup chain automatically
   (async () => {
+    // Kill any orphaned cloudflared.exe left over from a previous session
+    tunnel.killOrphanedCloudflared();
+
     const sendStatus = (msg) => {
       console.log('[Tunnel] ' + msg);
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -418,8 +473,9 @@ app.whenReady().then(async () => {
               if (idx !== -1) {
                 currentFeeds[idx].lastChecked = new Date().toISOString();
                 currentFeeds[idx].postCount = profileData.posts.length;
-                currentFeeds[idx].latestPostDate = profileData.posts.length > 0
-                  ? new Date(Math.max(...profileData.posts.map(p => new Date(p.timestamp || 0).getTime()))).toISOString()
+                const realPostsT = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+                currentFeeds[idx].latestPostDate = realPostsT.length > 0
+                  ? new Date(Math.max(...realPostsT.map(p => new Date(p.timestamp).getTime()))).toISOString()
                   : currentFeeds[idx].latestPostDate || null;
                 store.set('feeds', currentFeeds);
               }
@@ -448,6 +504,8 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  // Ensure cloudflared is fully killed before the app exits
+  tunnel.stopTunnel();
 });
 
 app.on('window-all-closed', () => {
@@ -615,11 +673,29 @@ function openTwitterLoginWindow() {
   });
 
   twitterLoginWindow.setMenuBarVisibility(false);
-  twitterLoginWindow.loadURL('https://x.com/i/flow/login');
+
+  // Spoof a real Chrome user agent — Twitter/X blocks or misbehaves with
+  // Electron's default UA that contains "Electron".  Set on the session so
+  // it applies to all sub-requests (XHR, fetch) not just top-level navigation.
+  const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  twitterLoginWindow.webContents.session.setUserAgent(chromeUA);
+  twitterLoginWindow.webContents.setUserAgent(chromeUA);
+
+  // Clear any stale Twitter cookies that might cause "wrong password" errors
+  (async () => {
+    const domains = ['x.com', 'twitter.com'];
+    for (const domain of domains) {
+      const cookies = await session.defaultSession.cookies.get({ domain });
+      for (const cookie of cookies) {
+        const url = `https://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
+        await session.defaultSession.cookies.remove(url, cookie.name).catch(() => {});
+      }
+    }
+    twitterLoginWindow.loadURL('https://x.com/i/flow/login');
+  })();
 
   twitterLoginWindow.webContents.on('did-navigate', (_e, url) => {
-    if (url === 'https://x.com/home' || url === 'https://x.com/home/' ||
-        url === 'https://twitter.com/home' || url === 'https://twitter.com/home/') {
+    if (url.startsWith('https://x.com/home') || url.startsWith('https://twitter.com/home')) {
       mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn: true });
       twitterLoginWindow.close();
     }
@@ -697,19 +773,58 @@ function openLinkedInLoginWindow() {
   linkedinLoginWindow.setMenuBarVisibility(false);
   linkedinLoginWindow.loadURL('https://www.linkedin.com/login');
 
+  // LinkedIn redirects through various URLs after login.  Only close the
+  // window when we can confirm the li_at session cookie is actually set.
+  let linkedinLoginClosed = false;
+  let linkedinPollTimer = null;
+
+  const tryCloseIfLoggedIn = async () => {
+    if (linkedinLoginClosed) return;
+    try {
+      // Search all cookies — li_at may be on .linkedin.com or .www.linkedin.com
+      const allCookies = await session.defaultSession.cookies.get({});
+      const authCookie = allCookies.find(c => c.name === 'li_at' && c.value.length > 0 && c.domain.includes('linkedin'));
+      if (authCookie) {
+        linkedinLoginClosed = true;
+        if (linkedinPollTimer) { clearInterval(linkedinPollTimer); linkedinPollTimer = null; }
+        mainWindow.webContents.send('login-status', { platform: 'linkedin', loggedIn: true });
+        if (linkedinLoginWindow && !linkedinLoginWindow.isDestroyed()) linkedinLoginWindow.close();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  };
+
+  const checkLinkedInUrl = (url) => {
+    return url.startsWith('https://www.linkedin.com/feed') ||
+           url.startsWith('https://www.linkedin.com/mynetwork') ||
+           url.startsWith('https://www.linkedin.com/in/') ||
+           (url.startsWith('https://www.linkedin.com/') && !url.includes('/login') && !url.includes('/checkpoint'));
+  };
+
+  // When we navigate to a logged-in-looking URL, start polling for the cookie
+  const startPolling = () => {
+    if (linkedinPollTimer || linkedinLoginClosed) return;
+    linkedinPollTimer = setInterval(tryCloseIfLoggedIn, 1500);
+    // Also try immediately
+    tryCloseIfLoggedIn();
+  };
+
   linkedinLoginWindow.webContents.on('did-navigate', (_e, url) => {
-    if (
-      url === 'https://www.linkedin.com/feed/' ||
-      url === 'https://www.linkedin.com/feed' ||
-      url === 'https://www.linkedin.com/' ||
-      url === 'https://www.linkedin.com'
-    ) {
-      mainWindow.webContents.send('login-status', { platform: 'linkedin', loggedIn: true });
-      linkedinLoginWindow.close();
-    }
+    if (checkLinkedInUrl(url)) startPolling();
+  });
+
+  linkedinLoginWindow.webContents.on('will-redirect', (_e, url) => {
+    if (checkLinkedInUrl(url)) startPolling();
+  });
+
+  linkedinLoginWindow.webContents.on('did-finish-load', () => {
+    const url = linkedinLoginWindow.webContents.getURL();
+    if (checkLinkedInUrl(url)) startPolling();
   });
 
   linkedinLoginWindow.on('closed', () => {
+    if (linkedinPollTimer) { clearInterval(linkedinPollTimer); linkedinPollTimer = null; }
     linkedinLoginWindow = null;
     checkLinkedInLoginStatus();
   });
@@ -744,11 +859,10 @@ async function checkLoginStatus() {
 
 async function checkTwitterLoginStatus() {
   try {
-    const cookies = await session.defaultSession.cookies.get({
-      domain: '.x.com',
-    });
-    const authCookie = cookies.find(c => c.name === 'auth_token' || c.name === 'ct0');
-    const loggedIn = !!authCookie && authCookie.value.length > 0;
+    // Check both .x.com and x.com domains
+    const cookies = await session.defaultSession.cookies.get({ domain: 'x.com' });
+    const authCookie = cookies.find(c => (c.name === 'auth_token' || c.name === 'ct0') && c.value.length > 0);
+    const loggedIn = !!authCookie;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn });
     }
@@ -792,11 +906,10 @@ async function checkFacebookLoginStatus() {
 
 async function checkLinkedInLoginStatus() {
   try {
-    const cookies = await session.defaultSession.cookies.get({
-      domain: '.linkedin.com',
-      name: 'li_at',
-    });
-    const loggedIn = cookies.length > 0 && cookies[0].value.length > 0;
+    // Search all cookies — li_at may be on .linkedin.com, www.linkedin.com, etc.
+    const allCookies = await session.defaultSession.cookies.get({});
+    const authCookie = allCookies.find(c => c.name === 'li_at' && c.value.length > 0 && c.domain.includes('linkedin'));
+    const loggedIn = !!authCookie;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('login-status', { platform: 'linkedin', loggedIn });
     }
@@ -822,7 +935,6 @@ ipcMain.handle('check-login', () => checkLoginStatus());
 ipcMain.handle('logout', async () => {
   await session.defaultSession.clearStorageData({
     origins: ['https://www.instagram.com', 'https://instagram.com'],
-    storages: ['cookies'],
   });
   mainWindow.webContents.send('login-status', { platform: 'instagram', loggedIn: false });
 });
@@ -833,7 +945,6 @@ ipcMain.handle('check-twitter-login', () => checkTwitterLoginStatus());
 ipcMain.handle('logout-twitter', async () => {
   await session.defaultSession.clearStorageData({
     origins: ['https://x.com', 'https://twitter.com'],
-    storages: ['cookies'],
   });
   mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn: false });
 });
@@ -844,7 +955,6 @@ ipcMain.handle('check-facebook-login', () => checkFacebookLoginStatus());
 ipcMain.handle('logout-facebook', async () => {
   await session.defaultSession.clearStorageData({
     origins: ['https://www.facebook.com', 'https://facebook.com'],
-    storages: ['cookies'],
   });
   mainWindow.webContents.send('login-status', { platform: 'facebook', loggedIn: false });
 });
@@ -855,9 +965,43 @@ ipcMain.handle('check-linkedin-login', () => checkLinkedInLoginStatus());
 ipcMain.handle('logout-linkedin', async () => {
   await session.defaultSession.clearStorageData({
     origins: ['https://www.linkedin.com', 'https://linkedin.com'],
-    storages: ['cookies'],
   });
   mainWindow.webContents.send('login-status', { platform: 'linkedin', loggedIn: false });
+});
+
+// Force reset: clear ALL cookies + storage for a platform (nuclear option)
+ipcMain.handle('force-reset-platform', async (_e, platform) => {
+  const domainMap = {
+    instagram: ['https://www.instagram.com', 'https://instagram.com'],
+    twitter: ['https://x.com', 'https://twitter.com', 'https://api.twitter.com'],
+    facebook: ['https://www.facebook.com', 'https://facebook.com'],
+    linkedin: ['https://www.linkedin.com', 'https://linkedin.com'],
+  };
+  const origins = domainMap[platform];
+  if (!origins) return;
+
+  // Clear all storage types for these origins
+  for (const origin of origins) {
+    await session.defaultSession.clearStorageData({ origin });
+  }
+
+  // Also nuke cookies by domain (catches subdomains the origin-based clear might miss)
+  const domainParts = {
+    instagram: ['instagram.com'],
+    twitter: ['x.com', 'twitter.com'],
+    facebook: ['facebook.com'],
+    linkedin: ['linkedin.com'],
+  };
+  for (const domain of (domainParts[platform] || [])) {
+    const cookies = await session.defaultSession.cookies.get({ domain });
+    for (const cookie of cookies) {
+      const url = `https://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
+      await session.defaultSession.cookies.remove(url, cookie.name).catch(() => {});
+    }
+  }
+
+  mainWindow.webContents.send('login-status', { platform, loggedIn: false });
+  return true;
 });
 
 ipcMain.handle('get-feeds', () => {
@@ -907,8 +1051,9 @@ ipcMain.handle('add-feed', async (_e, url) => {
   // For group/event identifiers with slashes, use a sanitized key for the feed filename
   const feedKey = username.replace(/\//g, '-');
 
-  const latestPostDate = profileData.posts.length > 0
-    ? new Date(Math.max(...profileData.posts.map(p => new Date(p.timestamp || 0).getTime()))).toISOString()
+  const realPostsAdd = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+  const latestPostDate = realPostsAdd.length > 0
+    ? new Date(Math.max(...realPostsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
   const entry = {
@@ -994,8 +1139,9 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
   // Resolve any previous errors for this feed
   resolveNotificationsBySubstring(`@${username}`);
 
-  const latestPostDate = profileData.posts.length > 0
-    ? new Date(Math.max(...profileData.posts.map(p => new Date(p.timestamp || 0).getTime()))).toISOString()
+  const realPostsRefresh = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+  const latestPostDate = realPostsRefresh.length > 0
+    ? new Date(Math.max(...realPostsRefresh.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
   const feeds = store.get('feeds').map((f) => {
@@ -1038,8 +1184,9 @@ ipcMain.handle('refresh-all', async () => {
       if (idx !== -1) {
         currentFeeds[idx].lastChecked = new Date().toISOString();
         currentFeeds[idx].postCount = profileData.posts.length;
-        currentFeeds[idx].latestPostDate = profileData.posts.length > 0
-          ? new Date(Math.max(...profileData.posts.map(p => new Date(p.timestamp || 0).getTime()))).toISOString()
+        const realPostsRA = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+        currentFeeds[idx].latestPostDate = realPostsRA.length > 0
+          ? new Date(Math.max(...realPostsRA.map(p => new Date(p.timestamp).getTime()))).toISOString()
           : currentFeeds[idx].latestPostDate || null;
         store.set('feeds', currentFeeds);
       }
@@ -1107,6 +1254,10 @@ function escapeXml(str) {
 
 ipcMain.handle('tunnel-check-installed', async () => {
   return tunnel.checkCloudflaredInstalled();
+});
+
+ipcMain.handle('tunnel-check-authenticated', () => {
+  return { authenticated: tunnel.checkAuthenticated() };
 });
 
 ipcMain.handle('tunnel-check-setup', async () => {

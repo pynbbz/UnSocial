@@ -393,6 +393,7 @@ async function enrichPostDetails(win, posts) {
   for (let i = 0; i < posts.length; i++) {
     if (!posts[i].timestamp) {
       posts[i].timestamp = new Date(now - i * 3600000).toISOString();
+      posts[i].timestampEstimated = true;
     }
   }
 }

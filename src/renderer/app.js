@@ -105,10 +105,22 @@ window.api.onLoginStatus(({ platform, loggedIn }) => {
     igLoggedIn = loggedIn;
     updatePlatformLoginUI('instagram', loggedIn);
   }
+  // Re-render feeds so logged-out platforms show red background
+  renderFeeds();
 });
 
 window.api.onTunnelStatus(({ status }) => {
   updateTunnelUI(status);
+  // Update DNS step checkmark when tunnel connects
+  if (status === 'running') {
+    const dnsStatus = $('#step-dns-status');
+    if (dnsStatus) {
+      dnsStatus.textContent = '✓ Routed';
+      dnsStatus.className = 'step-status ok';
+      const dnsStep = $('#wizard-step-dns');
+      if (dnsStep) dnsStep.classList.add('done');
+    }
+  }
 });
 
 // Auto-refresh: re-render feeds when main process refreshes them
@@ -219,6 +231,23 @@ liStatusEl.addEventListener('click', () => {
     window.api.openLinkedInLogin();
   }
 });
+
+// Right-click platform badge: force reset (clears all cookies & storage)
+for (const [el, platform, name] of [
+  [igStatusEl, 'instagram', 'Instagram'],
+  [twStatusEl, 'twitter', 'Twitter / X'],
+  [fbStatusEl, 'facebook', 'Facebook'],
+  [liStatusEl, 'linkedin', 'LinkedIn'],
+]) {
+  el.addEventListener('contextmenu', async (e) => {
+    e.preventDefault();
+    if (confirm(`Force reset ${name}? This will clear ALL cookies and stored data for ${name}. You will need to log in again.`)) {
+      await window.api.forceResetPlatform(platform);
+      toast(`${name} fully reset`, 'success');
+    }
+  });
+  el.title += ' · Right-click to force reset';
+}
 
 btnAdd.addEventListener('click', addFeed);
 inputUrl.addEventListener('keydown', (e) => {
@@ -408,13 +437,32 @@ async function runSetupChecks() {
     $('#wizard-step-install').classList.add('done');
   }
 
-  // Step 3: Check tunnel exists
   if (installed.installed) {
+    // Step 2: Check authentication (cert.pem exists)
+    const auth = await window.api.tunnelCheckAuthenticated();
+    if (auth.authenticated) {
+      $('#step-login-status').textContent = '✓ Authenticated';
+      $('#step-login-status').className = 'step-status ok';
+      $('#wizard-step-login').classList.add('done');
+    }
+
+    // Step 3: Check tunnel exists
     const setup = await window.api.tunnelCheckSetup();
     if (setup.exists) {
       $('#step-create-status').textContent = '✓ Exists';
       $('#step-create-status').className = 'step-status ok';
       $('#wizard-step-create').classList.add('done');
+    }
+
+    // Step 4: If tunnel is running or was previously set up, DNS is routed
+    // (DNS route is idempotent and auto-run on every launch by main process)
+    if (setup.exists && auth.authenticated) {
+      const tState = await window.api.tunnelState();
+      if (tState.status === 'running' || tState.status === 'starting') {
+        $('#step-dns-status').textContent = '✓ Routed';
+        $('#step-dns-status').className = 'step-status ok';
+        $('#wizard-step-dns').classList.add('done');
+      }
     }
   }
 }
@@ -532,17 +580,21 @@ function buildFeedCard(feed) {
     const card = document.createElement('div');
     card.className = 'feed-card';
     card.dataset.username = feed.username;
-    card.dataset.platform = feed.platform || 'instagram';
+    const platform = feed.platform || 'instagram';
+    card.dataset.platform = platform;
 
-    // Detect stale (>6h) or errored feeds
+    // Detect stale (>6h), errored feeds, or logged-out platform
     const lastCheckedMs = feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
     const isStale = (Date.now() - lastCheckedMs) > 6 * 60 * 60 * 1000;
     const hasError = notifications.some(n => !n.resolved && n.type === 'error' && n.message.includes(`@${feed.username}`));
-    if (isStale || hasError) {
+    const platformLoggedOut = (platform === 'instagram' && !igLoggedIn) ||
+                              (platform === 'twitter' && !twLoggedIn) ||
+                              (platform === 'facebook' && !fbLoggedIn) ||
+                              (platform === 'linkedin' && !liLoggedIn);
+    if (isStale || hasError || platformLoggedOut) {
       card.classList.add('feed-stale');
     }
 
-    const platform = feed.platform || 'instagram';
     const platformLogo = platform === 'twitter'
       ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
       : platform === 'facebook'

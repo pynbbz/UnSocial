@@ -1,4 +1,4 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
@@ -46,7 +46,7 @@ function getCloudflaredPath() {
   for (const p of candidates) {
     try {
       if (p && fs.existsSync(p)) {
-        _resolvedCloudflaredPath = `"${p}"`;
+        _resolvedCloudflaredPath = p;
         return _resolvedCloudflaredPath;
       }
     } catch (_) {}
@@ -121,7 +121,7 @@ async function checkCloudflaredInstalled() {
   const exe = getCloudflaredPath();
   return new Promise((resolve) => {
     try {
-      const proc = spawn(exe, ['version'], { shell: true });
+      const proc = spawn(exe, ['version']);
       let output = '';
       proc.stdout.on('data', (d) => (output += d.toString()));
       proc.stderr.on('data', (d) => (output += d.toString()));
@@ -151,34 +151,52 @@ function checkAuthenticated() {
 }
 
 /**
- * Check if the tunnel has been created and authenticated.
+ * Check if the tunnel has been created by looking for a local credentials file.
+ * This is faster and more reliable than `cloudflared tunnel list` which makes
+ * a network call and may output JSON to stderr on some versions.
  */
 async function checkTunnelSetup(store) {
   const tunnelName = store.get('tunnelName');
-  return new Promise((resolve) => {
-    try {
-      const proc = spawn(getCloudflaredPath(), ['tunnel', 'list', '-o', 'json'], {
-        shell: true,
-      });
-      let output = '';
-      proc.stdout.on('data', (d) => (output += d.toString()));
-      proc.stderr.on('data', (d) => (output += d.toString()));
-      proc.on('close', () => {
-        try {
-          const tunnels = JSON.parse(output);
-          const found = tunnels.find(
-            (t) => t.name === tunnelName && !t.deleted_at
-          );
-          resolve({ exists: !!found, tunnelId: found?.id || '' });
-        } catch {
-          resolve({ exists: false, tunnelId: '' });
-        }
-      });
-      proc.on('error', () => resolve({ exists: false, tunnelId: '' }));
-    } catch {
-      resolve({ exists: false, tunnelId: '' });
+  const defaultDir = path.join(
+    process.env.USERPROFILE || process.env.HOME || '',
+    '.cloudflared'
+  );
+
+  // Check for credentials JSON file (created when a tunnel is created)
+  // The file is named <tunnel-uuid>.json
+  let credentialsFound = false;
+  let tunnelId = '';
+  try {
+    if (fs.existsSync(defaultDir)) {
+      const files = fs.readdirSync(defaultDir);
+      const credFile = files.find(
+        (f) => f.endsWith('.json') && f !== 'cert.pem'
+      );
+      if (credFile) {
+        credentialsFound = true;
+        tunnelId = credFile.replace('.json', '');
+      }
     }
-  });
+  } catch (_) {}
+
+  // If credentials exist, the tunnel was created. Optionally verify the name
+  // matches by reading the JSON file.
+  if (credentialsFound && tunnelId) {
+    try {
+      const credPath = path.join(defaultDir, `${tunnelId}.json`);
+      const credContent = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
+      // cloudflared credentials files don't always store the name, so if we
+      // have a valid AccountTag + TunnelID, consider it existing.
+      if (credContent.AccountTag && credContent.TunnelID) {
+        return { exists: true, tunnelId: credContent.TunnelID };
+      }
+    } catch (_) {
+      // File exists but can't parse — still treat as existing
+      return { exists: true, tunnelId };
+    }
+  }
+
+  return { exists: credentialsFound, tunnelId };
 }
 
 /**
@@ -188,7 +206,7 @@ async function checkTunnelSetup(store) {
 function runSetupCommand(args) {
   return new Promise((resolve) => {
     try {
-      const proc = spawn(getCloudflaredPath(), args, { shell: true });
+      const proc = spawn(getCloudflaredPath(), args);
       let output = '';
       proc.stdout.on('data', (d) => (output += d.toString()));
       proc.stderr.on('data', (d) => (output += d.toString()));
@@ -221,7 +239,7 @@ function startTunnel(store) {
   // Clean up stale connections before starting (fire-and-forget)
   const tunnelName = store.get('tunnelName');
   try {
-    const cleanup = spawn(getCloudflaredPath(), ['tunnel', 'cleanup', tunnelName], { shell: true });
+    const cleanup = spawn(getCloudflaredPath(), ['tunnel', 'cleanup', tunnelName]);
     cleanup.on('close', () => {
       appendLog('[cleanup] Stale connections cleaned');
     });
@@ -234,8 +252,7 @@ function startTunnel(store) {
 
     tunnelProcess = spawn(
       getCloudflaredPath(),
-      ['tunnel', '--config', configPath, 'run'],
-      { shell: true }
+      ['tunnel', '--config', configPath, 'run']
     );
 
     tunnelProcess.stdout.on('data', (data) => {
@@ -282,15 +299,35 @@ function startTunnel(store) {
  */
 function stopTunnel() {
   if (tunnelProcess) {
-    tunnelProcess.kill('SIGTERM');
-    setTimeout(() => {
-      if (tunnelProcess) {
-        try { tunnelProcess.kill('SIGKILL'); } catch (_) {}
+    const pid = tunnelProcess.pid;
+    try {
+      if (process.platform === 'win32' && pid) {
+        // Kill the process and any children it may have spawned
+        execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+      } else {
+        tunnelProcess.kill('SIGTERM');
       }
-    }, 5000);
+    } catch (_) {
+      // taskkill may fail if process already exited; that's fine
+    }
+    tunnelProcess = null;
   }
-  tunnelProcess = null;
+  // Belt-and-suspenders: kill any remaining cloudflared.exe instances we own
+  killOrphanedCloudflared();
   setStatus('stopped');
+}
+
+/**
+ * Kill any orphaned cloudflared.exe processes.
+ * Safe to call multiple times; failures are silently ignored.
+ */
+function killOrphanedCloudflared() {
+  if (process.platform !== 'win32') return;
+  try {
+    execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
+  } catch (_) {
+    // No cloudflared running — that's fine
+  }
 }
 
 /**
@@ -329,6 +366,7 @@ module.exports = {
   runSetupCommand,
   startTunnel,
   stopTunnel,
+  killOrphanedCloudflared,
   getTunnelState,
   onTunnelStatusChange,
 };

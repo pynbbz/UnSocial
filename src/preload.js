@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('api', {
   checkLinkedInLogin: () => ipcRenderer.invoke('check-linkedin-login'),
   logoutLinkedIn: () => ipcRenderer.invoke('logout-linkedin'),
 
+  // Force reset (nuclear option — clears ALL data for a platform)
+  forceResetPlatform: (platform) => ipcRenderer.invoke('force-reset-platform', platform),
+
   // Feeds
   getFeeds: () => ipcRenderer.invoke('get-feeds'),
   addFeed: (url) => ipcRenderer.invoke('add-feed', url),
@@ -35,6 +38,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Tunnel
   tunnelCheckInstalled: () => ipcRenderer.invoke('tunnel-check-installed'),
+  tunnelCheckAuthenticated: () => ipcRenderer.invoke('tunnel-check-authenticated'),
   tunnelCheckSetup: () => ipcRenderer.invoke('tunnel-check-setup'),
   tunnelRunSetup: (step) => ipcRenderer.invoke('tunnel-run-setup', step),
   tunnelStart: () => ipcRenderer.invoke('tunnel-start'),
