@@ -40,6 +40,11 @@ async function generateFeed(username, profileData, store, platform) {
       favicon: 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png',
       label: username.startsWith('company/') ? 'LinkedIn Company' : 'LinkedIn',
     },
+    txt: {
+      siteUrl: profileData.biography || '',
+      favicon: 'https://cdn-icons-png.flaticon.com/512/337/337956.png',
+      label: 'Text',
+    },
   };
 
   const meta = platformMeta[platform] || platformMeta.instagram;

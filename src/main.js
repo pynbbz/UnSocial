@@ -71,6 +71,7 @@ const { scrapeInstagramProfile } = require('./scraper');
 const { scrapeTwitterProfile } = require('./scraper-twitter');
 const { scrapeFacebookProfile } = require('./scraper-facebook');
 const { scrapeLinkedInProfile } = require('./scraper-linkedin');
+const { scrapeTxtFile } = require('./scraper-txt');
 const { generateFeed } = require('./rss-generator');
 const tunnel = require('./tunnel');
 
@@ -308,6 +309,7 @@ async function refreshOldestFeed() {
     if (platform === 'twitter') profileData = await scrapeTwitterProfile(feed.username);
     else if (platform === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
     else if (platform === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
+    else if (platform === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
     else profileData = await scrapeInstagramProfile(feed.username);
 
     const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
@@ -463,6 +465,7 @@ app.whenReady().then(async () => {
               if (plat === 'twitter') profileData = await scrapeTwitterProfile(feed.username);
               else if (plat === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
               else if (plat === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
+              else if (plat === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
               await generateFeed(fk, profileData, store, plat);
@@ -1010,7 +1013,7 @@ ipcMain.handle('get-feeds', () => {
 
 ipcMain.handle('add-feed', async (_e, url) => {
   const parsed = parseProfileInput(url);
-  if (!parsed) throw new Error('Invalid URL or username. Supported: Instagram, Twitter/X, Facebook');
+  if (!parsed) throw new Error('Invalid URL or username. Supported: Instagram, Twitter/X, Facebook, LinkedIn, or .txt URLs');
 
   const { username, platform } = parsed;
   const feeds = store.get('feeds');
@@ -1027,14 +1030,18 @@ ipcMain.handle('add-feed', async (_e, url) => {
     profileData = await scrapeFacebookProfile(username, parsed.subTab, parsed.fullUrl);
   } else if (platform === 'linkedin') {
     profileData = await scrapeLinkedInProfile(username);
+  } else if (platform === 'txt') {
+    profileData = await scrapeTxtFile(parsed.fullUrl);
   } else {
     profileData = await scrapeInstagramProfile(username);
   }
 
   if (profileData.posts.length < 1) {
     throw new Error(
-      `Found no posts for @${username} on ${platform}. ` +
-      'Make sure you are logged in and the profile is accessible.'
+      platform === 'txt'
+        ? `Found no entries in ${parsed.fullUrl}. Make sure the file is a valid changelog.`
+        : `Found no posts for @${username} on ${platform}. ` +
+          'Make sure you are logged in and the profile is accessible.'
     );
   }
 
@@ -1046,6 +1053,7 @@ ipcMain.handle('add-feed', async (_e, url) => {
     facebook: `https://www.facebook.com/${username}`,
     instagram: `https://www.instagram.com/${username}/`,
     linkedin: `https://www.linkedin.com/in/${username}`,
+    txt: parsed.fullUrl || url,
   };
 
   // For group/event identifiers with slashes, use a sanitized key for the feed filename
@@ -1062,7 +1070,7 @@ ipcMain.handle('add-feed', async (_e, url) => {
     feedKey,
     platform,
     subTab: parsed.subTab || null,
-    fullUrl: parsed.fullUrl || null,
+    fullUrl: parsed.fullUrl || (platform === 'txt' ? url : null),
     alias: username,
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
@@ -1121,6 +1129,9 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
       profileData = await scrapeFacebookProfile(username, feedEntry?.subTab, feedEntry?.fullUrl);
     } else if (platform === 'linkedin') {
       profileData = await scrapeLinkedInProfile(username);
+    } else if (platform === 'txt') {
+      const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'txt');
+      profileData = await scrapeTxtFile(feedEntry?.fullUrl || feedEntry?.url);
     } else {
       profileData = await scrapeInstagramProfile(username);
     }
@@ -1173,6 +1184,8 @@ ipcMain.handle('refresh-all', async () => {
         profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
       } else if (platform === 'linkedin') {
         profileData = await scrapeLinkedInProfile(feed.username);
+      } else if (platform === 'txt') {
+        profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
       } else {
         profileData = await scrapeInstagramProfile(feed.username);
       }
@@ -1215,19 +1228,22 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
     let fileCount = 0;
 
     for (const [category, feeds] of Object.entries(groups)) {
-      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin' };
+      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Text': 'txt' };
       const platformUrlBase = {
         'Instagram': 'https://www.instagram.com/',
         'Twitter': 'https://x.com/',
         'Facebook': 'https://www.facebook.com/',
         'LinkedIn': 'https://www.linkedin.com/in/',
+        'Text': '',
       };
 
       let outlines = '';
       for (const feed of feeds) {
         const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
         const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}`;
-        const htmlUrl = `${platformUrlBase[category] || ''}${feed.username}/`;
+        const htmlUrl = feed.platform === 'txt'
+          ? (feed.fullUrl || feed.url || '')
+          : `${platformUrlBase[category] || ''}${feed.username}/`;
         const title = escapeXml(feed.alias || feed.username);
         outlines += `      <outline text="${title}" title="${title}" type="rss" xmlUrl="${escapeXml(xmlUrl)}" htmlUrl="${escapeXml(htmlUrl)}"/>\n`;
       }
@@ -1396,6 +1412,25 @@ function parseProfileInput(input) {
     /(?:https?:\/\/)?(?:www\.)?instagram\.com\/([a-zA-Z0-9._]+)/
   );
   if (igMatch) return { username: igMatch[1], platform: 'instagram' };
+
+  // .txt URL — any http(s) URL ending in .txt
+  const txtMatch = input.match(/^(https?:\/\/.+\.txt)$/i);
+  if (txtMatch) {
+    const fullUrl = txtMatch[1];
+    // Derive a short name from the URL path (e.g. "changelog" from changelog.txt)
+    let fileName;
+    try {
+      const u = new URL(fullUrl);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      fileName = (pathParts.pop() || 'feed').replace(/\.txt$/i, '');
+      // Prefix with hostname for uniqueness
+      const host = u.hostname.replace(/^www\./, '').replace(/\./g, '-');
+      fileName = `${host}-${fileName}`;
+    } catch (_) {
+      fileName = 'txt-feed';
+    }
+    return { username: fileName, platform: 'txt', fullUrl };
+  }
 
   // Bare @username or username — default to Instagram
   const bare = input.replace(/^@/, '');
