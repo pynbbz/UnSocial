@@ -35,6 +35,27 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* ── URL Blur Toggle ──────────────────────────────────────────────────── */
+
+.urls-blurred .feed-url-public,
+.urls-blurred .tunnel-url-public {
+  filter: blur(5px);
+  user-select: none;
+  pointer-events: none;
+  transition: filter 0.2s ease;
+}
+
+.feed-url-public,
+.tunnel-url-public {
+  transition: filter 0.2s ease;
+}
+
+.btn-blur-active {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+}
+
 /* ── Header ───────────────────────────────────────────────────────────── */
 
 .header {

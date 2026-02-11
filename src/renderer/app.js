@@ -16,6 +16,8 @@ const emptyState = $('#empty-state');
 const feedCount = $('#feed-count');
 const btnRefreshAll = $('#btn-refresh-all');
 const btnCopyOpml = $('#btn-copy-opml');
+const btnBlurToggle = $('#btn-blur-toggle');
+let urlsBlurred = false;
 
 
 // Tunnel elements
@@ -256,6 +258,13 @@ inputUrl.addEventListener('keydown', (e) => {
 
 btnRefreshAll.addEventListener('click', refreshAll);
 btnCopyOpml.addEventListener('click', exportOpml);
+
+btnBlurToggle.addEventListener('click', () => {
+  urlsBlurred = !urlsBlurred;
+  document.getElementById('app').classList.toggle('urls-blurred', urlsBlurred);
+  btnBlurToggle.textContent = urlsBlurred ? '🐵 Show URLs' : '🙈 Blur URLs';
+  btnBlurToggle.classList.toggle('btn-blur-active', urlsBlurred);
+});
 
 logoLink.addEventListener('click', (e) => {
   e.preventDefault();

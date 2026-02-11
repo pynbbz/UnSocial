@@ -2,6 +2,8 @@
 
 **Social media → RSS feed converter** — a Windows desktop app that turns Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
 
+![Showcase](Showcase.png)
+
 ![Electron](https://img.shields.io/badge/Electron-28-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
