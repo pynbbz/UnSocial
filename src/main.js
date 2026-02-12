@@ -322,8 +322,9 @@ async function refreshOldestFeed() {
       currentFeeds[idx].lastChecked = new Date().toISOString();
       currentFeeds[idx].postCount = profileData.posts.length;
       const realPosts = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
-      currentFeeds[idx].latestPostDate = realPosts.length > 0
-        ? new Date(Math.max(...realPosts.map(p => new Date(p.timestamp).getTime()))).toISOString()
+      const postsWithTs = realPosts.length > 0 ? realPosts : profileData.posts.filter(p => p.timestamp);
+      currentFeeds[idx].latestPostDate = postsWithTs.length > 0
+        ? new Date(Math.max(...postsWithTs.map(p => new Date(p.timestamp).getTime()))).toISOString()
         : currentFeeds[idx].latestPostDate || null;
       store.set('feeds', currentFeeds);
     }
@@ -477,8 +478,9 @@ app.whenReady().then(async () => {
                 currentFeeds[idx].lastChecked = new Date().toISOString();
                 currentFeeds[idx].postCount = profileData.posts.length;
                 const realPostsT = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
-                currentFeeds[idx].latestPostDate = realPostsT.length > 0
-                  ? new Date(Math.max(...realPostsT.map(p => new Date(p.timestamp).getTime()))).toISOString()
+                const postsWithTsT = realPostsT.length > 0 ? realPostsT : profileData.posts.filter(p => p.timestamp);
+                currentFeeds[idx].latestPostDate = postsWithTsT.length > 0
+                  ? new Date(Math.max(...postsWithTsT.map(p => new Date(p.timestamp).getTime()))).toISOString()
                   : currentFeeds[idx].latestPostDate || null;
                 store.set('feeds', currentFeeds);
               }
@@ -1060,8 +1062,9 @@ ipcMain.handle('add-feed', async (_e, url) => {
   const feedKey = username.replace(/\//g, '-');
 
   const realPostsAdd = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
-  const latestPostDate = realPostsAdd.length > 0
-    ? new Date(Math.max(...realPostsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
+  const postsWithTsAdd = realPostsAdd.length > 0 ? realPostsAdd : profileData.posts.filter(p => p.timestamp);
+  const latestPostDate = postsWithTsAdd.length > 0
+    ? new Date(Math.max(...postsWithTsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
   const entry = {
@@ -1151,8 +1154,9 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
   resolveNotificationsBySubstring(`@${username}`);
 
   const realPostsRefresh = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
-  const latestPostDate = realPostsRefresh.length > 0
-    ? new Date(Math.max(...realPostsRefresh.map(p => new Date(p.timestamp).getTime()))).toISOString()
+  const postsWithTsRefresh = realPostsRefresh.length > 0 ? realPostsRefresh : profileData.posts.filter(p => p.timestamp);
+  const latestPostDate = postsWithTsRefresh.length > 0
+    ? new Date(Math.max(...postsWithTsRefresh.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
   const feeds = store.get('feeds').map((f) => {
@@ -1198,8 +1202,9 @@ ipcMain.handle('refresh-all', async () => {
         currentFeeds[idx].lastChecked = new Date().toISOString();
         currentFeeds[idx].postCount = profileData.posts.length;
         const realPostsRA = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
-        currentFeeds[idx].latestPostDate = realPostsRA.length > 0
-          ? new Date(Math.max(...realPostsRA.map(p => new Date(p.timestamp).getTime()))).toISOString()
+        const postsWithTsRA = realPostsRA.length > 0 ? realPostsRA : profileData.posts.filter(p => p.timestamp);
+        currentFeeds[idx].latestPostDate = postsWithTsRA.length > 0
+          ? new Date(Math.max(...postsWithTsRA.map(p => new Date(p.timestamp).getTime()))).toISOString()
           : currentFeeds[idx].latestPostDate || null;
         store.set('feeds', currentFeeds);
       }

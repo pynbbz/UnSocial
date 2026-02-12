@@ -638,7 +638,7 @@ function buildFeedCard(feed) {
               <span class="feed-alias-text">${escapeHtml(feed.alias || feed.username)}</span>
             </div>
             <div class="feed-meta">
-              <span>@${escapeHtml(feed.username)}</span>
+              <a class="feed-username-link" href="#" data-url="${escapeHtml(feed.url)}" title="Open in browser">@${escapeHtml(feed.username)}</a>
             </div>
           </div>
         </div>
@@ -648,7 +648,7 @@ function buildFeedCard(feed) {
             <span>Updated ${timeAgo}</span>
           </div>
           <div class="feed-meta">
-            <span>Latest post ${formatTimeAgo(feed.latestPostDate)}</span>
+            <span style="font-weight:bold">Latest post ${formatTimeAgo(feed.latestPostDate)}</span>
           </div>
           <div class="feed-urls">
             <a class="feed-url feed-url-public" title="Click to copy public URL">${publicUrl}</a>
@@ -661,6 +661,12 @@ function buildFeedCard(feed) {
         <button class="btn btn-outline btn-sm btn-remove" title="Remove">✕</button>
       </div>
     `;
+
+    // Open source URL in user's browser on username click
+    card.querySelector('.feed-username-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.api.openExternal(feed.url);
+    });
 
     // Copy URL on click
     card.querySelector('.feed-url-public').addEventListener('click', (e) => {

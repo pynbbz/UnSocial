@@ -685,6 +685,17 @@ body {
   margin-top: 2px;
 }
 
+.feed-username-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.feed-username-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .feed-url {
   font-size: 11px;
   color: var(--text-muted);
