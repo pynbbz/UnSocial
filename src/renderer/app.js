@@ -519,13 +519,14 @@ async function renderFeeds() {
 
   // Group feeds by category
   const groups = {};
-  const groupOrder = ['Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Text'];
+  const groupOrder = ['Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
   for (const feed of feeds) {
     const platform = feed.platform || 'instagram';
     const category = platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
       platform === 'linkedin' ? 'LinkedIn' :
-      platform === 'txt' ? 'Text' : 'Instagram';
+      platform === 'txt' ? 'Text' :
+      platform === 'custom' ? 'Custom' : 'Instagram';
     if (!groups[category]) groups[category] = [];
     groups[category].push(feed);
   }
@@ -601,8 +602,8 @@ function buildFeedCard(feed) {
                               (platform === 'twitter' && !twLoggedIn) ||
                               (platform === 'facebook' && !fbLoggedIn) ||
                               (platform === 'linkedin' && !liLoggedIn);
-    // txt feeds never require login, so only mark stale for actual staleness/errors
-    if (isStale || hasError || (platformLoggedOut && platform !== 'txt')) {
+    // txt and custom feeds never require login, so only mark stale for actual staleness/errors
+    if (isStale || hasError || (platformLoggedOut && platform !== 'txt' && platform !== 'custom')) {
       card.classList.add('feed-stale');
     }
 
@@ -614,13 +615,16 @@ function buildFeedCard(feed) {
           ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
           : platform === 'txt'
             ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
-            : 'https://www.instagram.com/static/images/ico/favicon-192.png/68d99ba29cc8.png';
+            : platform === 'custom'
+              ? 'https://cdn-icons-png.flaticon.com/512/1006/1006771.png'
+              : 'https://www.instagram.com/static/images/ico/favicon-192.png/68d99ba29cc8.png';
     const isGroup = feed.username.startsWith('groups/');
     const isEvent = feed.username.startsWith('events/') || feed.username === 'events';
     const platformLabel = platform === 'twitter' ? 'Twitter' :
                           platform === 'facebook' ? (isGroup ? 'FB Group' : isEvent ? 'FB Event' : 'Facebook') :
                           platform === 'linkedin' ? 'LinkedIn' :
-                          platform === 'txt' ? 'Text' : 'Instagram';
+                          platform === 'txt' ? 'Text' :
+                          platform === 'custom' ? 'Custom' : 'Instagram';
     const feedKey = feed.feedKey || feed.username.replace(/\//g, '-');
     const rssUrl = `http://localhost:${serverPort}/feed/${feedKey}`;
     const publicUrl = `https://${tunnelDomain}/feed/${feedKey}`;
@@ -737,7 +741,7 @@ function createEmptyState() {
   div.innerHTML = `
     <div class="empty-icon">📡</div>
     <p>No feeds yet.</p>
-    <p class="subtle">Login to a platform, then add a profile URL above.</p>
+    <p class="subtle">Login to a platform, then add a profile URL above — or paste any website URL to create a custom feed.</p>
   `;
   return div;
 }
@@ -775,7 +779,8 @@ async function exportOpml() {
     const category = platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
       platform === 'linkedin' ? 'LinkedIn' :
-      platform === 'txt' ? 'Text' : 'Instagram';
+      platform === 'txt' ? 'Text' :
+      platform === 'custom' ? 'Custom' : 'Instagram';
     if (!groups[category]) groups[category] = [];
     groups[category].push(feed);
   }

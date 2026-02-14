@@ -45,6 +45,11 @@ async function generateFeed(username, profileData, store, platform) {
       favicon: 'https://cdn-icons-png.flaticon.com/512/337/337956.png',
       label: 'Text',
     },
+    custom: {
+      siteUrl: profileData.biography || `https://${username}`,
+      favicon: 'https://cdn-icons-png.flaticon.com/512/1006/1006771.png',
+      label: 'Custom',
+    },
   };
 
   const meta = platformMeta[platform] || platformMeta.instagram;

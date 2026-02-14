@@ -72,6 +72,7 @@ const { scrapeTwitterProfile } = require('./scraper-twitter');
 const { scrapeFacebookProfile } = require('./scraper-facebook');
 const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
+const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const tunnel = require('./tunnel');
 
@@ -310,6 +311,7 @@ async function refreshOldestFeed() {
     else if (platform === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
     else if (platform === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
     else if (platform === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
+    else if (platform === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
     else profileData = await scrapeInstagramProfile(feed.username);
 
     const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
@@ -467,6 +469,7 @@ app.whenReady().then(async () => {
               else if (plat === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
               else if (plat === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
               else if (plat === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
+              else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
               await generateFeed(fk, profileData, store, plat);
@@ -1015,9 +1018,15 @@ ipcMain.handle('get-feeds', () => {
 
 ipcMain.handle('add-feed', async (_e, url) => {
   const parsed = parseProfileInput(url);
-  if (!parsed) throw new Error('Invalid URL or username. Supported: Instagram, Twitter/X, Facebook, LinkedIn, or .txt URLs');
+  if (!parsed) throw new Error('Invalid URL or username. Supported: Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
 
   const { username, platform } = parsed;
+
+  // Custom websites get routed to the wizard flow
+  if (platform === 'custom') {
+    return await handleAddCustomFeed(parsed);
+  }
+
   const feeds = store.get('feeds');
 
   // Use platform+username as unique key so same username on different platforms is allowed
@@ -1087,6 +1096,66 @@ ipcMain.handle('add-feed', async (_e, url) => {
   return entry;
 });
 
+// ── Custom Website Feed (wizard-based) ─────────────────────────────────────
+
+async function handleAddCustomFeed(parsed) {
+  const result = await startCustomWizard(parsed.fullUrl, mainWindow);
+  const { pageUrl, selector, feedName, scrollSelector, scrollCount, profileData } = result;
+
+  if (!profileData || profileData.posts.length < 1) {
+    throw new Error('No items were found. Try clicking on a different element.');
+  }
+
+  // Re-focus main window
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+
+  // Derive username from feedName or URL
+  const username = (feedName || parsed.username)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-feed';
+
+  const feeds = store.get('feeds');
+  // Prevent duplicates
+  if (feeds.find((f) => f.username === username && f.platform === 'custom')) {
+    throw new Error(`Already tracking "${feedName || username}" as a custom feed`);
+  }
+
+  const feedKey = username.replace(/\//g, '-');
+
+  const realPostsAdd = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
+  const postsWithTsAdd = realPostsAdd.length > 0 ? realPostsAdd : profileData.posts.filter(p => p.timestamp);
+  const latestPostDate = postsWithTsAdd.length > 0
+    ? new Date(Math.max(...postsWithTsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
+    : null;
+
+  const entry = {
+    url: pageUrl,
+    username,
+    feedKey,
+    platform: 'custom',
+    subTab: null,
+    fullUrl: pageUrl,
+    selector,
+    scrollSelector: scrollSelector || null,
+    scrollCount: scrollCount || 0,
+    alias: feedName || username,
+    lastChecked: new Date().toISOString(),
+    postCount: profileData.posts.length,
+    latestPostDate,
+  };
+
+  feeds.push(entry);
+  store.set('feeds', feeds);
+
+  await generateFeed(feedKey, profileData, store, 'custom');
+  return entry;
+}
+
+ipcMain.handle('start-custom-feed', async (_e, url) => {
+  const parsed = parseProfileInput(url);
+  if (!parsed) throw new Error('Invalid URL');
+  return await handleAddCustomFeed(parsed);
+});
+
 ipcMain.handle('rename-feed', (_e, username, platform, newAlias) => {
   const fs = require('fs');
   const feedDir = require('./rss-generator').getFeedDir();
@@ -1135,6 +1204,9 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
     } else if (platform === 'txt') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'txt');
       profileData = await scrapeTxtFile(feedEntry?.fullUrl || feedEntry?.url);
+    } else if (platform === 'custom') {
+      const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'custom');
+      profileData = await scrapeCustomSiteHeadless(feedEntry?.fullUrl, feedEntry?.selector, feedEntry?.alias || username, feedEntry?.scrollSelector, feedEntry?.scrollCount);
     } else {
       profileData = await scrapeInstagramProfile(username);
     }
@@ -1190,6 +1262,8 @@ ipcMain.handle('refresh-all', async () => {
         profileData = await scrapeLinkedInProfile(feed.username);
       } else if (platform === 'txt') {
         profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
+      } else if (platform === 'custom') {
+        profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
       } else {
         profileData = await scrapeInstagramProfile(feed.username);
       }
@@ -1233,13 +1307,14 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
     let fileCount = 0;
 
     for (const [category, feeds] of Object.entries(groups)) {
-      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Text': 'txt' };
+      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Text': 'txt', 'Custom': 'custom' };
       const platformUrlBase = {
         'Instagram': 'https://www.instagram.com/',
         'Twitter': 'https://x.com/',
         'Facebook': 'https://www.facebook.com/',
         'LinkedIn': 'https://www.linkedin.com/in/',
         'Text': '',
+        'Custom': '',
       };
 
       let outlines = '';
@@ -1248,7 +1323,9 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
         const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}`;
         const htmlUrl = feed.platform === 'txt'
           ? (feed.fullUrl || feed.url || '')
-          : `${platformUrlBase[category] || ''}${feed.username}/`;
+          : feed.platform === 'custom'
+            ? (feed.fullUrl || feed.url || '')
+            : `${platformUrlBase[category] || ''}${feed.username}/`;
         const title = escapeXml(feed.alias || feed.username);
         outlines += `      <outline text="${title}" title="${title}" type="rss" xmlUrl="${escapeXml(xmlUrl)}" htmlUrl="${escapeXml(htmlUrl)}"/>\n`;
       }
@@ -1440,6 +1517,23 @@ function parseProfileInput(input) {
   // Bare @username or username — default to Instagram
   const bare = input.replace(/^@/, '');
   if (/^[a-zA-Z0-9._]{1,30}$/.test(bare)) return { username: bare, platform: 'instagram' };
+
+  // Any other URL — treat as custom website (catch-all)
+  // Also match URLs without protocol (e.g. "example.com/page")
+  const anyUrlMatch = input.match(/^(https?:\/\/.+)/i) || input.match(/^([a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}\/.+)/i);
+  if (anyUrlMatch) {
+    const fullUrl = anyUrlMatch[1].startsWith('http') ? anyUrlMatch[1] : 'https://' + anyUrlMatch[1];
+    let siteName;
+    try {
+      const u = new URL(fullUrl);
+      const host = u.hostname.replace(/^www\./, '').replace(/\./g, '-');
+      const pathSlug = u.pathname.replace(/^\/|\/$|\.[^.]+$/g, '').replace(/\//g, '-') || '';
+      siteName = pathSlug ? `${host}-${pathSlug}` : host;
+    } catch (_) {
+      siteName = 'custom-feed';
+    }
+    return { username: siteName, platform: 'custom', fullUrl };
+  }
 
   return null;
 }

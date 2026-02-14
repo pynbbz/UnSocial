@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('api', {
   // Force reset (nuclear option — clears ALL data for a platform)
   forceResetPlatform: (platform) => ipcRenderer.invoke('force-reset-platform', platform),
 
+  // Custom website
+  startCustomFeed: (url) => ipcRenderer.invoke('start-custom-feed', url),
+
   // Feeds
   getFeeds: () => ipcRenderer.invoke('get-feeds'),
   addFeed: (url) => ipcRenderer.invoke('add-feed', url),
