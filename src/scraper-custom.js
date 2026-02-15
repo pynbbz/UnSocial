@@ -154,64 +154,78 @@ function startCustomWizard(siteUrl, parentWindow) {
  * @returns {Promise<{fullName, biography, posts[]}>}
  */
 async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelector, scrollCount) {
-  const hidden = new BrowserWindow({
-    width: 1280,
-    height: 900,
-    show: false,
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: false,
-    },
-  });
+  const MAX_ATTEMPTS = 2;
+  let lastError;
 
-  // Spoof user agent
-  const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-  hidden.webContents.session.setUserAgent(chromeUA);
-  hidden.webContents.setUserAgent(chromeUA);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const hidden = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      show: false,
+      webPreferences: {
+        contextIsolation: false,
+        nodeIntegration: false,
+      },
+    });
 
-  try {
-    await loadPage(hidden, pageUrl);
-    // Wait for dynamic content to render
-    await sleep(4000);
+    // Spoof user agent
+    const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    hidden.webContents.session.setUserAgent(chromeUA);
+    hidden.webContents.setUserAgent(chromeUA);
 
-    // Perform scrolling if configured
-    const numScrolls = parseInt(scrollCount, 10) || 0;
-    if (numScrolls > 0) {
-      for (let i = 0; i < numScrolls; i++) {
-        await hidden.webContents.executeJavaScript(`
-          (function() {
-            var scrollSel = ${JSON.stringify(scrollSelector || null)};
-            var target = scrollSel ? document.querySelector(scrollSel) : null;
-            if (target) {
-              target.scrollBy({ top: target.clientHeight || 800, behavior: 'smooth' });
-            } else {
-              window.scrollBy({ top: window.innerHeight || 800, behavior: 'smooth' });
-            }
-          })();
-        `);
-        // Wait between scrolls for lazy-loaded content to appear
+    try {
+      await loadPage(hidden, pageUrl);
+      // Wait for dynamic content to render (6s for heavy SPAs like Meetup)
+      await sleep(6000);
+
+      // Perform scrolling if configured
+      const numScrolls = parseInt(scrollCount, 10) || 0;
+      if (numScrolls > 0) {
+        for (let i = 0; i < numScrolls; i++) {
+          await hidden.webContents.executeJavaScript(`
+            (function() {
+              var scrollSel = ${JSON.stringify(scrollSelector || null)};
+              var target = scrollSel ? document.querySelector(scrollSel) : null;
+              if (target) {
+                target.scrollBy({ top: target.clientHeight || 800, behavior: 'smooth' });
+              } else {
+                window.scrollBy({ top: window.innerHeight || 800, behavior: 'smooth' });
+              }
+            })();
+          `);
+          // Wait between scrolls for lazy-loaded content to appear
+          await sleep(2000);
+        }
+        // Extra wait after all scrolls for final content to render
         await sleep(2000);
       }
-      // Extra wait after all scrolls for final content to render
-      await sleep(2000);
+
+      const items = await hidden.webContents.executeJavaScript(`
+        (function() {
+          var els = document.querySelectorAll(${JSON.stringify(selector)});
+          var items = [];
+          els.forEach(function(el, i) {
+            ${EXTRACT_ITEM_JS}
+            items.push(item);
+          });
+          return items;
+        })();
+      `);
+
+      return buildProfileData(items, feedName, pageUrl);
+    } catch (err) {
+      lastError = err;
+      console.error(`[Custom-scraper] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${pageUrl}: ${err.message}`);
+      if (attempt < MAX_ATTEMPTS) {
+        // Wait before retrying to let transient issues resolve
+        await sleep(3000);
+      }
+    } finally {
+      if (!hidden.isDestroyed()) hidden.destroy();
     }
-
-    const items = await hidden.webContents.executeJavaScript(`
-      (function() {
-        var els = document.querySelectorAll(${JSON.stringify(selector)});
-        var items = [];
-        els.forEach(function(el, i) {
-          ${EXTRACT_ITEM_JS}
-          items.push(item);
-        });
-        return items;
-      })();
-    `);
-
-    return buildProfileData(items, feedName, pageUrl);
-  } finally {
-    if (!hidden.isDestroyed()) hidden.destroy();
   }
+
+  throw lastError;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -224,7 +238,8 @@ function loadPage(win, url) {
       clearTimeout(timeout);
       resolve();
     });
-    win.webContents.on('did-fail-load', (_e, code, desc) => {
+    win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+      if (!isMainFrame) return;  // Ignore sub-frame failures (ads, iframes, etc.)
       clearTimeout(timeout);
       reject(new Error(`Failed to load page: ${desc} (${code})`));
     });
