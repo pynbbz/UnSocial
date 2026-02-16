@@ -68,7 +68,7 @@ function startCustomWizard(siteUrl, parentWindow) {
         const currentUrl = wizardWin.webContents.getURL();
         if (currentUrl && !currentUrl.startsWith('about:')) targetUrl = currentUrl;
       }
-      injectToolbar(wizardWin, step, targetUrl).catch(() => {});
+      injectToolbar(wizardWin, step, targetUrl).catch(() => { });
     });
 
     // ── Messages from injected JS (via preload bridge) ──────────────────
@@ -78,7 +78,7 @@ function startCustomWizard(siteUrl, parentWindow) {
       switch (subChannel) {
         case 'login-done':
           step = 'navigate';
-          injectToolbar(wizardWin, step, targetUrl).catch(() => {});
+          injectToolbar(wizardWin, step, targetUrl).catch(() => { });
           break;
 
         case 'navigate-to': {
@@ -90,7 +90,7 @@ function startCustomWizard(siteUrl, parentWindow) {
 
         case 'start-selector':
           step = 'select';
-          injectSelector(wizardWin).catch(() => {});
+          injectSelector(wizardWin).catch(() => { });
           break;
 
         case 'confirm-items': {
@@ -99,7 +99,7 @@ function startCustomWizard(siteUrl, parentWindow) {
           step = 'scroll';
           // Stash the selection data for after the scroll step
           wizardWin.__unsocialSelectionData = data;
-          injectScrollStep(wizardWin, targetUrl).catch(() => {});
+          injectScrollStep(wizardWin, targetUrl).catch(() => { });
           break;
         }
 
@@ -263,7 +263,7 @@ function buildProfileData(items, feedName, pageUrl) {
     id: item.link || `${pageUrl}#item-${i}`,
     shortcode: `item-${i}`,
     caption: item.title || item.text || '(no title)',
-    timestamp: (function() {
+    timestamp: (function () {
       if (!item.date) return new Date().toISOString();
       // Strip IANA timezone annotations like [America/Edmonton]
       var cleaned = item.date.replace(/\[.*?\]/g, '').trim();
@@ -292,22 +292,80 @@ const EXTRACT_ITEM_JS = `
   // Extract meaningful content from a single list-item element
   var item = { title: '', text: '', link: '', image: '', date: '' };
 
-  // Link: first <a> with a real href
-  var aTag = el.querySelector('a[href]');
-  if (aTag) {
-    var href = aTag.href;
-    if (href && !href.startsWith('javascript:')) item.link = href;
-  }
-
-  // Title: first heading, or first <a> text, or first bold text
+  // ── Title: first heading, or bold text ──
   var heading = el.querySelector('h1, h2, h3, h4, h5, h6');
+  var titleText = '';
   if (heading) {
-    item.title = heading.innerText.trim();
-  } else if (aTag) {
-    item.title = aTag.innerText.trim();
+    titleText = heading.innerText.trim();
   } else {
     var bold = el.querySelector('b, strong');
-    if (bold) item.title = bold.innerText.trim();
+    if (bold) titleText = bold.innerText.trim();
+  }
+
+  // ── Link: score all <a> tags and pick the best one ──
+  // Instead of blindly grabbing the first <a>, we score each one so that
+  // title/topic links beat icon-only or navigation links.
+  var allLinks = Array.from(el.querySelectorAll('a[href]'));
+  var bestLink = null;
+  var bestScore = -1;
+
+  for (var li = 0; li < allLinks.length; li++) {
+    var a = allLinks[li];
+    var h = a.href;
+    if (!h || h.startsWith('javascript:')) continue;
+
+    var score = 0;
+    var aText = a.innerText.trim();
+    var aClass = (a.className || '').toLowerCase();
+
+    // Highest priority: class name contains "title" (e.g. "topictitle")
+    if (aClass.indexOf('title') !== -1) score += 100;
+
+    // High priority: the link text matches the title we already found
+    if (titleText && aText.length > 0 && aText === titleText) score += 80;
+
+    // Medium priority: link has meaningful visible text (not just icons)
+    if (aText.length > 3) {
+      score += 10 + Math.min(aText.length, 50);
+    }
+
+    // Deprioritise links that only wrap an icon/image (no real text)
+    if (aText.length === 0) score -= 10;
+
+    // Deprioritise profile / member links
+    if (h.indexOf('memberlist') !== -1 || h.indexOf('profile') !== -1) score -= 20;
+
+    // Deprioritise links with a fragment that looks like an anchor jump
+    if (/#(?!$)/.test(h) && aText.length < 3) score -= 5;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestLink = a;
+    }
+  }
+
+  // Fallback: first <a> if nothing scored well
+  if (!bestLink && allLinks.length > 0) {
+    for (var fi = 0; fi < allLinks.length; fi++) {
+      var fh = allLinks[fi].href;
+      if (fh && !fh.startsWith('javascript:')) { bestLink = allLinks[fi]; break; }
+    }
+  }
+
+  if (bestLink) {
+    item.link = bestLink.href;
+  }
+
+  // ── Title: prefer heading, then title-class link, then bold, then any link text ──
+  // If the best link has a title-related class (e.g. "topictitle"), its text
+  // should override bold/strong text (which may just be pagination numbers).
+  var bestLinkClass = bestLink ? (bestLink.className || '').toLowerCase() : '';
+  if (bestLink && bestLinkClass.indexOf('title') !== -1 && bestLink.innerText.trim().length > 0) {
+    item.title = bestLink.innerText.trim();
+  } else if (titleText) {
+    item.title = titleText;
+  } else if (bestLink && bestLink.innerText.trim().length > 0) {
+    item.title = bestLink.innerText.trim();
   }
 
   // Image: first <img>
@@ -411,7 +469,7 @@ async function injectToolbar(win, step, targetUrl) {
 
   try {
     await win.webContents.executeJavaScript(js);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 async function injectSelector(win) {
@@ -537,6 +595,26 @@ async function injectSelector(win) {
                   }
                 }
               } catch(e) { /* skip */ }
+            }
+
+            // Strategy 3b: table structures — when parent is TBODY/THEAD/TFOOT
+            // with no id/classes, try the grandparent TABLE for a selector
+            if (!parentSel && /^(TBODY|THEAD|TFOOT)$/.test(parent.tagName)) {
+              var tableEl = parent.parentElement;
+              if (tableEl && tableEl.tagName === 'TABLE') {
+                var tableSel = getSimpleSelector(tableEl);
+                if (tableSel) {
+                  var sel = tableSel + ' > ' + parent.tagName.toLowerCase() + ' > ' + tag.toLowerCase();
+                  try {
+                    var matches = document.querySelectorAll(sel);
+                    if (matches.length >= 2 && matches.length <= 500) {
+                      if (!bestResult || matches.length <= bestResult.count) {
+                        bestResult = { container: current, selector: sel, count: matches.length };
+                      }
+                    }
+                  } catch(e) { /* skip */ }
+                }
+              }
             }
           }
 
@@ -728,7 +806,7 @@ async function injectSelector(win) {
 
   try {
     await win.webContents.executeJavaScript(js);
-  } catch (_) {}
+  } catch (_) { }
 }
 
 module.exports = { startCustomWizard, scrapeCustomSiteHeadless };
@@ -955,5 +1033,5 @@ async function injectScrollStep(win) {
 
   try {
     await win.webContents.executeJavaScript(js);
-  } catch (_) {}
+  } catch (_) { }
 }
