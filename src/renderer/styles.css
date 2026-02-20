@@ -1041,4 +1041,78 @@ body {
   cursor: default;
 }
 
+/* ── Token Authentication Section ────────────────────────────────────── */
+
+.token-section {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.token-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.token-icon {
+  font-size: 14px;
+}
+
+.token-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.token-status.enabled {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--success);
+}
+
+.token-status.disabled {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--text-muted);
+}
+
+.token-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.token-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.token-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  outline: none;
+  cursor: default;
+}
+
+.token-input::placeholder {
+  color: var(--text-muted);
+  font-family: var(--font);
+}
+
+.token-actions {
+  display: flex;
+  gap: 6px;
+}
 

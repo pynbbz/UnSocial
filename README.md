@@ -16,6 +16,7 @@
 - **OPML export** — One-click export for importing into other RSS readers
 - **Notification system** — Alerts for stale feeds, failed refreshes, and connectivity issues
 - **System tray** — Minimizes to tray and runs in the background
+- **Feed authentication** — Optional token-based auth to protect feeds when exposed publicly
 - **Portable** — Single-exe portable build; data is stored next to the executable
 
 ## Getting Started
@@ -99,6 +100,21 @@ cloudflared --version
 3. Follow the guided steps to authenticate, create the tunnel, and route DNS.
 4. Click **▶ Start Tunnel** — your feeds will be available at `https://your-domain/feed/<username>`.
 
+#### Feed Authentication
+
+If you're exposing feeds publicly, you can protect them with a token so only you (and your RSS reader) can access them.
+
+1. In the **Public Access** panel, find the **Feed Authentication** section.
+2. Click **Generate Token** — a secure random token is created and saved.
+3. All feed URLs automatically update to include `?token=<your-token>` — copy these into your RSS reader.
+4. Unauthenticated requests (including the root `/` discovery endpoint) receive a `401 Unauthorized` response.
+
+Your RSS reader can authenticate in two ways:
+- **Query parameter:** `https://your-domain/feed/username?token=<your-token>`
+- **Bearer header:** `Authorization: Bearer <your-token>`
+
+To disable authentication, click **Remove Token**. Feeds revert to fully public.
+
 ## Project Structure
 
 ```
@@ -131,6 +147,7 @@ All settings are persisted via `electron-store` in the app's user data directory
 | `tunnelDomain` | *(empty)* | Your custom domain for public feed access |
 | `tunnelName` | `unsocial-tunnel` | Cloudflare Tunnel name |
 | `checkIntervalMinutes` | `30` | Base refresh interval (actual timing is randomized) |
+| `feedToken` | *(empty)* | When set, all feed server requests require this token |
 
 ## Contributing
 

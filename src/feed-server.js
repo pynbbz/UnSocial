@@ -19,6 +19,24 @@ function startFeedServer(store) {
     next();
   });
 
+  // Token authentication — protects all routes when a token is configured.
+  // Accepts ?token=<value> query param  OR  Authorization: Bearer <value> header.
+  app.use((req, res, next) => {
+    const expectedToken = store.get('feedToken');
+    if (!expectedToken) return next();
+
+    const queryToken = req.query.token;
+    const headerToken = (req.headers.authorization || '').startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : null;
+
+    if (queryToken === expectedToken || headerToken === expectedToken) {
+      return next();
+    }
+
+    res.status(401).json({ error: 'Unauthorized — valid token required' });
+  });
+
   // RSS feed endpoint
   app.get('/feed/:username', (req, res) => {
     const { username } = req.params;
@@ -49,10 +67,12 @@ function startFeedServer(store) {
       .map((f) => f.replace('.rss.xml', ''));
 
     const port = store.get('serverPort');
+    const token = store.get('feedToken');
+    const tokenSuffix = token || '';
     const feeds = files.map((username) => ({
       username,
-      rss: `http://localhost:${port}/feed/${username}`,
-      atom: `http://localhost:${port}/feed/${username}?format=atom`,
+      rss: `http://localhost:${port}/feed/${username}` + (tokenSuffix ? `?token=${tokenSuffix}` : ''),
+      atom: `http://localhost:${port}/feed/${username}?format=atom` + (tokenSuffix ? `&token=${tokenSuffix}` : ''),
     }));
 
     res.json({ feeds });

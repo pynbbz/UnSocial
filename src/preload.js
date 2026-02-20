@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('api', {
   tunnelGetSettings: () => ipcRenderer.invoke('tunnel-get-settings'),
   tunnelSaveSettings: (s) => ipcRenderer.invoke('tunnel-save-settings', s),
 
+  // Feed Token
+  getFeedToken: () => ipcRenderer.invoke('get-feed-token'),
+  setFeedToken: (token) => ipcRenderer.invoke('set-feed-token', token),
+  generateFeedToken: () => ipcRenderer.invoke('generate-feed-token'),
+
   // Utils
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 

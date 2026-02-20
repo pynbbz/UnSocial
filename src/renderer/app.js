@@ -48,6 +48,7 @@ let fbLoggedIn = false;
 let liLoggedIn = false;
 let tunnelDomain = '';
 let tunnelRunning = false;
+let feedToken = '';
 
 // Track which feed groups are collapsed (default: all collapsed)
 const groupCollapsed = {};
@@ -62,6 +63,9 @@ let groupCollapseInitialized = false;
   notifications = await window.api.getNotifications();
   renderNotifications();
 
+  // Load feed token
+  feedToken = await window.api.getFeedToken();
+  updateTokenUI();
 
   // Load tunnel settings
   const tunnelSettings = await window.api.tunnelGetSettings();
@@ -158,11 +162,17 @@ function updateDomainDisplay() {
   if (wizardDomain) wizardDomain.textContent = tunnelDomain || '<your-domain>';
 }
 
+function tokenQueryString(prefix) {
+  if (!feedToken) return '';
+  return prefix + 'token=' + feedToken;
+}
+
 function updateTunnelUrls() {
   const urlsEl = $('#tunnel-urls');
   if (!urlsEl) return;
-  const localUrl = `http://localhost:${serverPort}/feed/<username>`;
-  const publicUrl = tunnelDomain ? `https://${tunnelDomain}/feed/<username>` : 'Set a domain above to enable public URLs';
+  const tokenSuffix = tokenQueryString('?');
+  const localUrl = `http://localhost:${serverPort}/feed/<username>${tokenSuffix}`;
+  const publicUrl = tunnelDomain ? `https://${tunnelDomain}/feed/<username>${tokenSuffix}` : 'Set a domain above to enable public URLs';
   urlsEl.innerHTML = `
     <div class="tunnel-url-row">
       <span class="tunnel-url-label">Local:</span>
@@ -180,7 +190,7 @@ function updateTunnelUrls() {
   if (tunnelDomain) {
     urlsEl.querySelector('.tunnel-url-public')?.addEventListener('click', () => {
       if (tunnelRunning) {
-        copyToClipboard(`https://${tunnelDomain}/feed/<username>`);
+        copyToClipboard(`https://${tunnelDomain}/feed/<username>${tokenSuffix}`);
         toast('Public URL copied!', 'success');
       }
     });
@@ -402,6 +412,55 @@ if (btnSaveTunnelSettings) {
 linkCloudflared.addEventListener('click', (e) => {
   e.preventDefault();
   window.api.openExternal('https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/');
+});
+
+// ── Token Authentication ────────────────────────────────────────────────
+
+const tokenDisplay = $('#token-display');
+const tokenStatus = $('#token-status');
+const btnTokenGenerate = $('#btn-token-generate');
+const btnTokenCopy = $('#btn-token-copy');
+const btnTokenClear = $('#btn-token-clear');
+
+function updateTokenUI() {
+  if (feedToken) {
+    tokenDisplay.value = feedToken;
+    tokenStatus.textContent = 'Enabled';
+    tokenStatus.className = 'token-status enabled';
+    btnTokenClear.style.display = '';
+    btnTokenCopy.style.display = '';
+  } else {
+    tokenDisplay.value = '';
+    tokenDisplay.placeholder = 'No token set — feeds are public';
+    tokenStatus.textContent = 'Disabled';
+    tokenStatus.className = 'token-status disabled';
+    btnTokenClear.style.display = 'none';
+    btnTokenCopy.style.display = 'none';
+  }
+  updateTunnelUrls();
+}
+
+btnTokenGenerate.addEventListener('click', async () => {
+  feedToken = await window.api.generateFeedToken();
+  updateTokenUI();
+  await renderFeeds();
+  toast('Token generated — feed URLs now require authentication', 'success');
+});
+
+btnTokenCopy.addEventListener('click', () => {
+  if (feedToken) {
+    copyToClipboard(feedToken);
+    toast('Token copied!', 'success');
+  }
+});
+
+btnTokenClear.addEventListener('click', async () => {
+  if (!confirm('Remove authentication token? All feed URLs will become publicly accessible.')) return;
+  feedToken = '';
+  await window.api.setFeedToken('');
+  updateTokenUI();
+  await renderFeeds();
+  toast('Token removed — feeds are now public', 'success');
 });
 
 btnCfLogin.addEventListener('click', async () => {
@@ -626,8 +685,9 @@ function buildFeedCard(feed) {
                           platform === 'txt' ? 'Text' :
                           platform === 'custom' ? 'Custom' : 'Instagram';
     const feedKey = feed.feedKey || feed.username.replace(/\//g, '-');
-    const rssUrl = `http://localhost:${serverPort}/feed/${feedKey}`;
-    const publicUrl = `https://${tunnelDomain}/feed/${feedKey}`;
+    const tokenSuffix = tokenQueryString('?');
+    const rssUrl = `http://localhost:${serverPort}/feed/${feedKey}${tokenSuffix}`;
+    const publicUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
     const timeAgo = formatTimeAgo(feed.lastChecked);
 
     card.innerHTML = `

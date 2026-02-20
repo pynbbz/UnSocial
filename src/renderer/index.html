@@ -177,6 +177,25 @@
 
       <!-- Tunnel URLs (always visible) -->
       <div id="tunnel-urls" class="tunnel-urls"></div>
+
+      <!-- Feed Authentication -->
+      <div class="token-section" id="token-section">
+        <div class="token-header">
+          <span class="token-icon">🔒</span>
+          <strong>Feed Authentication</strong>
+          <span class="token-status" id="token-status">Disabled</span>
+        </div>
+        <div class="token-body">
+          <div class="token-row">
+            <input type="text" id="token-display" class="token-input" placeholder="No token set — feeds are public" readonly />
+            <button class="btn btn-outline btn-sm" id="btn-token-copy" title="Copy token">📋</button>
+          </div>
+          <div class="token-actions">
+            <button class="btn btn-primary btn-sm" id="btn-token-generate">Generate Token</button>
+            <button class="btn btn-outline btn-sm" id="btn-token-clear">Remove Token</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- Feeds List -->

@@ -76,6 +76,8 @@ const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custo
 const { generateFeed } = require('./rss-generator');
 const tunnel = require('./tunnel');
 
+const crypto = require('crypto');
+
 const store = new Store({
   defaults: {
     feeds: [],       // Array of { url, username, alias, lastChecked }
@@ -84,6 +86,7 @@ const store = new Store({
     tunnelDomain: '',
     tunnelName: 'unsocial-tunnel',
     tunnelAutoStart: false,
+    feedToken: '',   // When non-empty, all feed-server requests require this token
   }
 });
 
@@ -1304,6 +1307,8 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
   try {
     // Determine export directory: beside the exe for portable, or app path
     const exportDir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+    const feedTokenExport = store.get('feedToken');
+    const tokenSuffix = feedTokenExport ? `?token=${feedTokenExport}` : '';
     let fileCount = 0;
 
     for (const [category, feeds] of Object.entries(groups)) {
@@ -1320,7 +1325,7 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
       let outlines = '';
       for (const feed of feeds) {
         const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
-        const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}`;
+        const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
         const htmlUrl = feed.platform === 'txt'
           ? (feed.fullUrl || feed.url || '')
           : feed.platform === 'custom'
@@ -1404,6 +1409,23 @@ ipcMain.handle('tunnel-save-settings', (_e, settings) => {
   if (settings.tunnelName) store.set('tunnelName', settings.tunnelName);
   if (typeof settings.autoStart === 'boolean') store.set('tunnelAutoStart', settings.autoStart);
   return true;
+});
+
+// ── Feed Token IPC Handlers ───────────────────────────────────────────
+
+ipcMain.handle('get-feed-token', () => {
+  return store.get('feedToken') || '';
+});
+
+ipcMain.handle('set-feed-token', (_e, token) => {
+  store.set('feedToken', token || '');
+  return store.get('feedToken');
+});
+
+ipcMain.handle('generate-feed-token', () => {
+  const token = crypto.randomBytes(32).toString('hex');
+  store.set('feedToken', token);
+  return token;
 });
 
 // ── Notification IPC Handlers ─────────────────────────────────────────────
