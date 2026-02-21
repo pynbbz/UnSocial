@@ -1,0 +1,16 @@
+services:
+  unsocial:
+    build: .
+    container_name: unsocial
+    ports:
+      - "3845:3845"
+    volumes:
+      - unsocial-data:/data
+    environment:
+      - UNSOCIAL_DATA=/data
+      # Set a token to protect the management API (recommended)
+      # - UNSOCIAL_API_TOKEN=change-me-to-a-secret
+    restart: unless-stopped
+
+volumes:
+  unsocial-data:

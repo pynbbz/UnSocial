@@ -8,9 +8,15 @@ let server = null;
 /**
  * Start a local Express server that serves the generated RSS/Atom feed files.
  * Any RSS reader can subscribe to:  http://localhost:<port>/feed/<username>
+ *
+ * @param {object} store   - electron-store instance
+ * @param {object} [options]
+ * @param {string} [options.host='127.0.0.1'] - Bind address ('0.0.0.0' for Docker)
+ * @returns {object} The Express app instance (for adding management routes in headless mode)
  */
-function startFeedServer(store) {
+function startFeedServer(store, options) {
   const port = store.get('serverPort');
+  const host = (options && options.host) || '127.0.0.1';
   const app = express();
 
   // CORS — allow RSS readers to fetch
@@ -19,9 +25,11 @@ function startFeedServer(store) {
     next();
   });
 
-  // Token authentication — protects all routes when a token is configured.
+  // Token authentication — protects feed routes when a token is configured.
   // Accepts ?token=<value> query param  OR  Authorization: Bearer <value> header.
+  // Skips /api/* routes so the management API can handle its own auth.
   app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
     const expectedToken = store.get('feedToken');
     if (!expectedToken) return next();
 
@@ -78,13 +86,15 @@ function startFeedServer(store) {
     res.json({ feeds });
   });
 
-  server = app.listen(port, '127.0.0.1', () => {
-    console.log(`RSS feed server running at http://localhost:${port}/`);
+  server = app.listen(port, host, () => {
+    console.log(`RSS feed server running at http://${host}:${port}/`);
   });
 
   server.on('error', (err) => {
     console.error('Feed server error:', err.message);
   });
+
+  return app;
 }
 
 function stopFeedServer() {

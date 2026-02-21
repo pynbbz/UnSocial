@@ -22,6 +22,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "headless": "electron --no-sandbox --disable-gpu src/headless.js",
     "build": "npm version patch --no-git-tag-version && electron-builder --win",
     "build:minor": "npm version minor --no-git-tag-version && electron-builder --win",
     "build:major": "npm version major --no-git-tag-version && electron-builder --win",

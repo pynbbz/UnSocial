@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.github
+*.exe
+UnSocial-data
+UnSocial-userdata
+*.log
+.env
+.env.local
