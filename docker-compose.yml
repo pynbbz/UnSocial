@@ -10,6 +10,8 @@ services:
       - UNSOCIAL_DATA=/data
       # Set a token to protect the management API (recommended)
       # - UNSOCIAL_API_TOKEN=change-me-to-a-secret
+      # Set a token to require authentication on RSS feed URLs (?token=<value>)
+      # - UNSOCIAL_FEED_TOKEN=change-me-to-a-secret
     restart: unless-stopped
 
 volumes:

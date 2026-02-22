@@ -1,168 +1,167 @@
-# UnSocial
+# UnSocial — Docker Mode
 
-**Social media → RSS feed converter** — a Windows desktop app that turns Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
-
-![Showcase](Showcase.png)
+**Social media → RSS feed converter** — runs as a headless Docker container, turning Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
 
 ![Electron](https://img.shields.io/badge/Electron-28-blue)
+![Docker](https://img.shields.io/badge/Docker-ready-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Features
 
-- **Multi-platform** — Supports Instagram, Twitter/X, Facebook (pages, groups, events), and LinkedIn (profiles, companies)
-- **Local RSS server** — Serves feeds on `http://localhost:3845/feed/<username>` — works with any RSS reader
-- **Public access via Cloudflare Tunnel** — Optionally expose feeds to the internet through your own domain
-- **Auto-refresh** — Smart staggered refresh keeps feeds up-to-date without hammering platforms
-- **OPML export** — One-click export for importing into other RSS readers
-- **Notification system** — Alerts for stale feeds, failed refreshes, and connectivity issues
-- **System tray** — Minimizes to tray and runs in the background
-- **Feed authentication** — Optional token-based auth to protect feeds when exposed publicly
-- **Portable** — Single-exe portable build; data is stored next to the executable
+- **Multi-platform** — Instagram, Twitter/X, Facebook (pages, groups, events), LinkedIn (profiles, companies), custom websites, and text file URLs
+- **RSS server** — Serves feeds on `http://<server-ip>:3845/feed/<username>`
+- **Auto-refresh** — Smart staggered refresh keeps feeds current without hammering platforms
+- **Feed authentication** — Optional token-based auth to protect feeds
+- **REST management API** — Add, remove, refresh, and configure feeds remotely
+- **Persistent storage** — All data survives container restarts
 
-## Getting Started
+## Quick Start
 
-### Prerequisites
-
-- **Node.js** 18+ and **npm**
-- **Windows** (the app is built for Windows; other platforms may work but are untested)
-
-### Install & Run
+### Docker Compose (recommended)
 
 ```bash
-# Clone the repo
-git clone https://github.com/<your-username>/UnSocial.git
+git clone https://github.com/pynbbz/UnSocial.git
 cd UnSocial
-
-# Install dependencies
-npm install
-
-# Run in development mode
-npm start
 ```
 
-### Build a Portable Executable
+Edit `docker-compose.yml` to set your tokens, then:
 
 ```bash
-npm run build
+docker compose up -d
 ```
 
-The output will be in the `dist/` folder as a single portable `.exe`.
+### Docker Run
 
-## Usage
-
-1. **Log in** — Click a platform badge in the header bar to open a login window. The app uses your browser session to access posts.
-2. **Add a feed** — Paste a profile URL (e.g. `https://www.instagram.com/natgeo/`) into the input bar and click **+ Add Feed**.
-3. **Subscribe** — Copy the local RSS URL from the feed card and add it to your RSS reader.
-
-### Public Access (Cloudflare Tunnel)
-
-To make your feeds accessible from the internet (e.g. for phone-based RSS readers), you need to set up a Cloudflare Tunnel.
-
-#### Installing `cloudflared`
-
-`cloudflared` is Cloudflare's official tunnel client. Install it for your platform:
-
-**Windows (winget — recommended):**
 ```bash
-winget install Cloudflare.cloudflared
+docker run -d \
+  --name unsocial \
+  -p 3845:3845 \
+  -v unsocial-data:/data \
+  -e UNSOCIAL_API_TOKEN=my-secret-api-key \
+  -e UNSOCIAL_FEED_TOKEN=my-secret-feed-key \
+  unsocial
 ```
 
-**Windows (Chocolatey):**
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UNSOCIAL_DATA` | `/data` | Persistent data directory inside the container |
+| `UNSOCIAL_API_TOKEN` | *(none)* | Protects `/api/*` management routes — **strongly recommended** |
+| `UNSOCIAL_FEED_TOKEN` | *(none)* | Protects RSS feed URLs — readers must append `?token=<value>` |
+
+### Two Tokens, Two Purposes
+
+- **`UNSOCIAL_API_TOKEN`** → secures the management API (`/api/*`). Pass via `?api_token=`, `X-Api-Token` header, or `Authorization: Bearer` header.
+- **`UNSOCIAL_FEED_TOKEN`** → secures RSS feed endpoints (`/feed/*`). Pass via `?token=` query param or `Authorization: Bearer` header. Can also be set/changed later via the config API.
+
+## Management API
+
+All endpoints are under `/api/`. Include your `UNSOCIAL_API_TOKEN` in every request if set.
+
+### List feeds
 ```bash
-choco install cloudflared
+curl "http://localhost:3845/api/feeds?api_token=YOUR_API_TOKEN"
 ```
 
-**Windows (manual):** Download the latest `.msi` or `.exe` from the [Cloudflare downloads page](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) and add it to your PATH.
-
-**macOS (Homebrew):**
+### Add a feed
 ```bash
-brew install cloudflared
+curl -X POST "http://localhost:3845/api/feeds?api_token=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.instagram.com/natgeo/"}'
 ```
 
-**Linux (apt):**
+Supported URL formats:
+- Instagram: `https://www.instagram.com/username/`
+- Twitter/X: `https://x.com/username`
+- Facebook: `https://www.facebook.com/pagename`
+- LinkedIn: `https://www.linkedin.com/in/username`
+- Custom site: any URL + `"selector": "CSS selector"` for scraping
+- Text file: direct `.txt` URL
+
+### Remove a feed
 ```bash
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install cloudflared
+curl -X DELETE "http://localhost:3845/api/feeds?api_token=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "natgeo", "platform": "instagram"}'
 ```
 
-Verify the installation:
+### Refresh a single feed
 ```bash
-cloudflared --version
+curl -X POST "http://localhost:3845/api/feeds/refresh?api_token=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "natgeo", "platform": "instagram"}'
 ```
 
-> **Note:** You also need a Cloudflare account and a domain managed by Cloudflare DNS. Free-tier accounts work fine.
-
-#### Setting Up the Tunnel in UnSocial
-
-1. Click **⚙️ Setup** in the Public Access panel.
-2. Enter your **domain** (e.g. `feeds.example.com`) and a **tunnel name**, then click **Save**.
-3. Follow the guided steps to authenticate, create the tunnel, and route DNS.
-4. Click **▶ Start Tunnel** — your feeds will be available at `https://your-domain/feed/<username>`.
-
-#### Feed Authentication
-
-If you're exposing feeds publicly, you can protect them with a token so only you (and your RSS reader) can access them.
-
-1. In the **Public Access** panel, find the **Feed Authentication** section.
-2. Click **Generate Token** — a secure random token is created and saved.
-3. All feed URLs automatically update to include `?token=<your-token>` — copy these into your RSS reader.
-4. Unauthenticated requests (including the root `/` discovery endpoint) receive a `401 Unauthorized` response.
-
-Your RSS reader can authenticate in two ways:
-- **Query parameter:** `https://your-domain/feed/username?token=<your-token>`
-- **Bearer header:** `Authorization: Bearer <your-token>`
-
-To disable authentication, click **Remove Token**. Feeds revert to fully public.
-
-## Project Structure
-
-```
-UnSocial/
-├── assets/              # App icons
-├── src/
-│   ├── main.js          # Electron main process
-│   ├── preload.js       # Context bridge (IPC API)
-│   ├── feed-server.js   # Local Express RSS server
-│   ├── rss-generator.js # RSS/Atom XML generation
-│   ├── tunnel.js        # Cloudflare Tunnel management
-│   ├── scraper.js       # Instagram scraper
-│   ├── scraper-twitter.js
-│   ├── scraper-facebook.js
-│   ├── scraper-linkedin.js
-│   └── renderer/
-│       ├── index.html   # App UI
-│       ├── app.js       # Renderer logic
-│       └── styles.css   # Styles
-└── package.json
+### Refresh all feeds
+```bash
+curl -X POST "http://localhost:3845/api/refresh-all?api_token=YOUR_API_TOKEN"
 ```
 
-## Configuration
+### Rename a feed
+```bash
+curl -X PATCH "http://localhost:3845/api/feeds/rename?api_token=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "natgeo", "platform": "instagram", "alias": "National Geographic"}'
+```
 
-All settings are persisted via `electron-store` in the app's user data directory (or beside the portable exe):
+### View config
+```bash
+curl "http://localhost:3845/api/config?api_token=YOUR_API_TOKEN"
+```
+
+### Update config
+```bash
+curl -X PATCH "http://localhost:3845/api/config?api_token=YOUR_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"checkIntervalMinutes": 60}'
+```
+
+Configurable fields: `checkIntervalMinutes`, `tunnelDomain`, `tunnelName`, `feedToken`
+
+### Generate / view feed token via API
+```bash
+# Generate a new token
+curl -X POST "http://localhost:3845/api/token/generate?api_token=YOUR_API_TOKEN"
+
+# View current token
+curl "http://localhost:3845/api/token?api_token=YOUR_API_TOKEN"
+```
+
+### Check server status
+```bash
+curl "http://localhost:3845/api/status?api_token=YOUR_API_TOKEN"
+```
+
+## Subscribing to Feeds
+
+Once feeds are added, subscribe in your RSS reader using:
+
+```
+http://<server-ip>:3845/feed/<username>?token=YOUR_FEED_TOKEN
+```
+
+For Atom format, add `&format=atom`:
+```
+http://<server-ip>:3845/feed/<username>?token=YOUR_FEED_TOKEN&format=atom
+```
+
+Visit `http://<server-ip>:3845/` to discover all available feeds.
+
+## Configuration Reference
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `serverPort` | `3845` | Local RSS server port |
-| `tunnelDomain` | *(empty)* | Your custom domain for public feed access |
+| `serverPort` | `3845` | RSS server port |
+| `checkIntervalMinutes` | `30` | Base refresh interval (timing is randomized ±20 min) |
+| `feedToken` | *(empty)* | When set, all feed requests require this token |
+| `tunnelDomain` | *(empty)* | Custom domain for public access via Cloudflare Tunnel |
 | `tunnelName` | `unsocial-tunnel` | Cloudflare Tunnel name |
-| `checkIntervalMinutes` | `30` | Base refresh interval (actual timing is randomized) |
-| `feedToken` | *(empty)* | When set, all feed server requests require this token |
-
-## Contributing
-
-Contributions are welcome! Please open an issue first to discuss what you'd like to change.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -m 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-This tool is intended for personal use. Scraping social media platforms may violate their terms of service. Use responsibly and at your own risk. The authors are not responsible for any misuse or consequences arising from the use of this software.
+This tool is intended for personal use. Scraping social media platforms may violate their terms of service. Use responsibly and at your own risk.

@@ -9,8 +9,9 @@
  *   UNSOCIAL_DATA=/data electron --no-sandbox src/headless.js
  *
  * Environment variables:
- *   UNSOCIAL_DATA      – Path to persistent data directory (default: /data)
+ *   UNSOCIAL_DATA       – Path to persistent data directory (default: /data)
  *   UNSOCIAL_API_TOKEN  – Optional token to protect the /api/* management routes
+ *   UNSOCIAL_FEED_TOKEN – Optional token to protect RSS feed endpoints (?token=<value>)
  */
 
 const { app } = require('electron');
@@ -59,6 +60,12 @@ const store = new Store({
     feedToken: '',
   },
 });
+
+// Seed feedToken from env var if not already set in the store
+if (process.env.UNSOCIAL_FEED_TOKEN && !store.get('feedToken')) {
+  store.set('feedToken', process.env.UNSOCIAL_FEED_TOKEN);
+  console.log('[Config] Feed token set from UNSOCIAL_FEED_TOKEN environment variable');
+}
 
 // ── Scrape dispatcher ──────────────────────────────────────────────────────
 

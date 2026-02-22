@@ -3,6 +3,7 @@ FROM node:20-bookworm-slim
 # Electron / Chromium runtime dependencies + Xvfb for virtual display
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
+    xauth \
     libgtk-3-0 \
     libnotify4 \
     libnss3 \
