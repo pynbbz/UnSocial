@@ -47,6 +47,14 @@
             <span class="status-text">LinkedIn</span>
           </div>
         </div>
+        <!-- Public Access Button -->
+        <button class="btn-public-access" id="btn-public-access" title="Public Access & Feed Authentication">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+        </button>
         <!-- Notification Bell (rightmost) -->
         <div class="notification-wrapper" id="notification-wrapper">
           <button class="btn-bell" id="btn-bell" title="Notifications">
@@ -102,102 +110,6 @@
       </div>
     </section>
 
-    <!-- Tunnel Panel -->
-    <section class="tunnel-panel" id="tunnel-panel">
-      <div class="tunnel-header">
-        <div class="tunnel-title">
-          <span class="tunnel-icon">🌐</span>
-          <strong>Public Access</strong>
-          <div id="tunnel-status-badge" class="status-badge offline">
-            <span class="status-dot"></span>
-            <span class="status-text" id="tunnel-status-text">Stopped</span>
-          </div>
-        </div>
-        <div class="tunnel-controls">
-          <button id="btn-tunnel-setup" class="btn btn-outline btn-sm" title="Setup wizard">⚙️ Setup</button>
-          <button id="btn-tunnel-toggle" class="btn btn-primary btn-sm">▶ Start Tunnel</button>
-        </div>
-      </div>
-
-      <!-- Setup Wizard (hidden by default) -->
-      <div id="tunnel-setup-wizard" class="tunnel-wizard" style="display:none;">
-        <!-- Domain & Tunnel Name Settings -->
-        <div class="wizard-step wizard-settings-step">
-          <span class="step-num">⚙</span>
-          <div class="step-content">
-            <div class="step-title">Tunnel Settings</div>
-            <div class="tunnel-settings-row">
-              <label class="tunnel-setting-label" for="tunnel-domain-input">Domain</label>
-              <input type="text" id="tunnel-domain-input" class="tunnel-setting-input" placeholder="example.com" autocomplete="off" />
-            </div>
-            <div class="tunnel-settings-row">
-              <label class="tunnel-setting-label" for="tunnel-name-input">Tunnel Name</label>
-              <input type="text" id="tunnel-name-input" class="tunnel-setting-input" placeholder="unsocial-tunnel" autocomplete="off" />
-            </div>
-            <button class="btn btn-primary btn-sm" id="btn-save-tunnel-settings">Save</button>
-          </div>
-        </div>
-
-        <div class="wizard-step" id="wizard-step-install">
-          <span class="step-num">1</span>
-          <div class="step-content">
-            <div class="step-title">Install cloudflared</div>
-            <div class="step-desc">Download from <a id="link-cloudflared" href="#">cloudflare.com</a> &amp; add to PATH</div>
-            <span class="step-status" id="step-install-status">checking…</span>
-          </div>
-        </div>
-        <div class="wizard-step" id="wizard-step-login">
-          <span class="step-num">2</span>
-          <div class="step-content">
-            <div class="step-title">Authenticate with Cloudflare</div>
-            <div class="step-desc">Opens a browser to authorize your account</div>
-            <button class="btn btn-outline btn-sm" id="btn-cf-login">Run Login</button>
-            <span class="step-status" id="step-login-status"></span>
-          </div>
-        </div>
-        <div class="wizard-step" id="wizard-step-create">
-          <span class="step-num">3</span>
-          <div class="step-content">
-            <div class="step-title">Create tunnel</div>
-            <div class="step-desc">Creates tunnel named "<span id="wizard-tunnel-name">unsocial-tunnel</span>"</div>
-            <button class="btn btn-outline btn-sm" id="btn-cf-create">Create Tunnel</button>
-            <span class="step-status" id="step-create-status"></span>
-          </div>
-        </div>
-        <div class="wizard-step" id="wizard-step-dns">
-          <span class="step-num">4</span>
-          <div class="step-content">
-            <div class="step-title">Route DNS</div>
-            <div class="step-desc">Points <code id="wizard-domain">your-domain</code> → this tunnel</div>
-            <button class="btn btn-outline btn-sm" id="btn-cf-dns">Route DNS</button>
-            <span class="step-status" id="step-dns-status"></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tunnel URLs (always visible) -->
-      <div id="tunnel-urls" class="tunnel-urls"></div>
-
-      <!-- Feed Authentication -->
-      <div class="token-section" id="token-section">
-        <div class="token-header">
-          <span class="token-icon">🔒</span>
-          <strong>Feed Authentication</strong>
-          <span class="token-status" id="token-status">Disabled</span>
-        </div>
-        <div class="token-body">
-          <div class="token-row">
-            <input type="text" id="token-display" class="token-input" placeholder="No token set — feeds are public" readonly />
-            <button class="btn btn-outline btn-sm" id="btn-token-copy" title="Copy token">📋</button>
-          </div>
-          <div class="token-actions">
-            <button class="btn btn-primary btn-sm" id="btn-token-generate">Generate Token</button>
-            <button class="btn btn-outline btn-sm" id="btn-token-clear">Remove Token</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- Feeds List -->
     <section class="feeds-section">
       <div id="feeds-list" class="feeds-list">
@@ -209,6 +121,104 @@
       </div>
     </section>
 
+    <!-- Public Access Overlay -->
+    <div class="public-access-overlay" id="public-access-overlay" style="display:none;">
+      <div class="public-access-page">
+        <div class="public-access-page-header">
+          <div class="public-access-title">
+            <span class="tunnel-icon">🌐</span>
+            <h2>Public Access</h2>
+            <div id="tunnel-status-badge" class="status-badge offline">
+              <span class="status-dot"></span>
+              <span class="status-text" id="tunnel-status-text">Stopped</span>
+            </div>
+          </div>
+          <button class="btn-close-overlay" id="btn-close-overlay" title="Close">✕</button>
+        </div>
+        <div class="public-access-content">
+          <div class="tunnel-controls-row">
+            <button id="btn-tunnel-setup" class="btn btn-outline btn-sm" title="Setup wizard">⚙️ Setup</button>
+            <button id="btn-tunnel-toggle" class="btn btn-primary btn-sm">▶ Start Tunnel</button>
+          </div>
+
+          <!-- Setup Wizard (hidden by default) -->
+          <div id="tunnel-setup-wizard" class="tunnel-wizard" style="display:none;">
+            <div class="wizard-step wizard-settings-step">
+              <span class="step-num">⚙</span>
+              <div class="step-content">
+                <div class="step-title">Tunnel Settings</div>
+                <div class="tunnel-settings-row">
+                  <label class="tunnel-setting-label" for="tunnel-domain-input">Domain</label>
+                  <input type="text" id="tunnel-domain-input" class="tunnel-setting-input" placeholder="example.com" autocomplete="off" />
+                </div>
+                <div class="tunnel-settings-row">
+                  <label class="tunnel-setting-label" for="tunnel-name-input">Tunnel Name</label>
+                  <input type="text" id="tunnel-name-input" class="tunnel-setting-input" placeholder="unsocial-tunnel" autocomplete="off" />
+                </div>
+                <button class="btn btn-primary btn-sm" id="btn-save-tunnel-settings">Save</button>
+              </div>
+            </div>
+            <div class="wizard-step" id="wizard-step-install">
+              <span class="step-num">1</span>
+              <div class="step-content">
+                <div class="step-title">Install cloudflared</div>
+                <div class="step-desc">Download from <a id="link-cloudflared" href="#">cloudflare.com</a> &amp; add to PATH</div>
+                <span class="step-status" id="step-install-status">checking…</span>
+              </div>
+            </div>
+            <div class="wizard-step" id="wizard-step-login">
+              <span class="step-num">2</span>
+              <div class="step-content">
+                <div class="step-title">Authenticate with Cloudflare</div>
+                <div class="step-desc">Opens a browser to authorize your account</div>
+                <button class="btn btn-outline btn-sm" id="btn-cf-login">Run Login</button>
+                <span class="step-status" id="step-login-status"></span>
+              </div>
+            </div>
+            <div class="wizard-step" id="wizard-step-create">
+              <span class="step-num">3</span>
+              <div class="step-content">
+                <div class="step-title">Create tunnel</div>
+                <div class="step-desc">Creates tunnel named "<span id="wizard-tunnel-name">unsocial-tunnel</span>"</div>
+                <button class="btn btn-outline btn-sm" id="btn-cf-create">Create Tunnel</button>
+                <span class="step-status" id="step-create-status"></span>
+              </div>
+            </div>
+            <div class="wizard-step" id="wizard-step-dns">
+              <span class="step-num">4</span>
+              <div class="step-content">
+                <div class="step-title">Route DNS</div>
+                <div class="step-desc">Points <code id="wizard-domain">your-domain</code> → this tunnel</div>
+                <button class="btn btn-outline btn-sm" id="btn-cf-dns">Route DNS</button>
+                <span class="step-status" id="step-dns-status"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tunnel URLs -->
+          <div id="tunnel-urls" class="tunnel-urls"></div>
+
+          <!-- Feed Authentication -->
+          <div class="token-section" id="token-section">
+            <div class="token-header">
+              <span class="token-icon">🔒</span>
+              <strong>Feed Authentication</strong>
+              <span class="token-status" id="token-status">Disabled</span>
+            </div>
+            <div class="token-body">
+              <div class="token-row">
+                <input type="text" id="token-display" class="token-input" placeholder="No token set — feeds are public" readonly />
+                <button class="btn btn-outline btn-sm" id="btn-token-copy" title="Copy token">📋</button>
+              </div>
+              <div class="token-actions">
+                <button class="btn btn-primary btn-sm" id="btn-token-generate">Generate Token</button>
+                <button class="btn btn-outline btn-sm" id="btn-token-clear">Remove Token</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
   </div>
 

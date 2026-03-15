@@ -32,6 +32,13 @@ const btnCfCreate = $('#btn-cf-create');
 const btnCfDns = $('#btn-cf-dns');
 const linkCloudflared = $('#link-cloudflared');
 
+// Public Access overlay elements
+const btnPublicAccess = $('#btn-public-access');
+const publicAccessOverlay = $('#public-access-overlay');
+const btnCloseOverlay = $('#btn-close-overlay');
+let publicAccessOpen = false;
+let currentTunnelStatus = 'stopped';
+
 // Notification elements
 const btnBell = $('#btn-bell');
 const bellBadge = $('#bell-badge');
@@ -84,6 +91,7 @@ let groupCollapseInitialized = false;
   // Check tunnel state
   const tState = await window.api.tunnelState();
   updateTunnelUI(tState.status);
+  updatePublicAccessIcon();
 
   // Check logins
   await window.api.checkLogin();
@@ -143,6 +151,7 @@ if (window.api.onNotificationsUpdated) {
 }
 
 function updateTunnelUI(status) {
+  currentTunnelStatus = status;
   tunnelRunning = status === 'running';
   tunnelStatusText.textContent =
     status === 'running' ? 'Connected' :
@@ -155,6 +164,20 @@ function updateTunnelUI(status) {
     status === 'starting' ? '⏳ Connecting…' : '▶ Start Tunnel';
   btnTunnelToggle.disabled = status === 'starting';
   updateTunnelUrls();
+  updatePublicAccessIcon();
+}
+
+function updatePublicAccessIcon() {
+  const hasErrors = notifications.some(n => !n.resolved && n.type === 'error');
+  btnPublicAccess.classList.remove('status-green', 'status-yellow', 'status-red');
+
+  if (hasErrors) {
+    btnPublicAccess.classList.add('status-red');
+  } else if (currentTunnelStatus === 'running') {
+    btnPublicAccess.classList.add('status-green');
+  } else if (currentTunnelStatus === 'starting') {
+    btnPublicAccess.classList.add('status-yellow');
+  }
 }
 
 function updateDomainDisplay() {
@@ -302,6 +325,33 @@ btnNotifClear.addEventListener('click', async () => {
   renderNotifications();
 });
 
+// ── Public Access Overlay ───────────────────────────────────────────────────
+
+btnPublicAccess.addEventListener('click', (e) => {
+  e.stopPropagation();
+  publicAccessOpen = true;
+  publicAccessOverlay.style.display = '';
+});
+
+btnCloseOverlay.addEventListener('click', () => {
+  publicAccessOpen = false;
+  publicAccessOverlay.style.display = 'none';
+});
+
+publicAccessOverlay.addEventListener('click', (e) => {
+  if (e.target === publicAccessOverlay) {
+    publicAccessOpen = false;
+    publicAccessOverlay.style.display = 'none';
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && publicAccessOpen) {
+    publicAccessOpen = false;
+    publicAccessOverlay.style.display = 'none';
+  }
+});
+
 function renderNotifications() {
   const unresolved = notifications.filter(n => !n.resolved);
   const unresolvedErrors = unresolved.filter(n => n.type === 'error');
@@ -320,6 +370,8 @@ function renderNotifications() {
   } else {
     btnBell.classList.remove('has-errors');
   }
+
+  updatePublicAccessIcon();
 
   // Render list
   if (notifications.length === 0) {

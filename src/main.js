@@ -142,6 +142,16 @@ function resolveNotificationsBySubstring(substr) {
   recalcTrayIcon();
 }
 
+function removeNotificationsBySubstring(substr) {
+  for (let i = notificationLog.length - 1; i >= 0; i--) {
+    if (notificationLog[i].message.includes(substr)) {
+      notificationLog.splice(i, 1);
+    }
+  }
+  sendNotificationsToRenderer();
+  recalcTrayIcon();
+}
+
 function sendNotificationsToRenderer() {
   try {
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
@@ -192,8 +202,7 @@ function startInternetMonitor() {
       addNotification('error', 'Internet connection lost');
     } else if (online && internetDown) {
       internetDown = false;
-      resolveNotificationsBySubstring('Internet connection');
-      addNotification('info', 'Internet connection restored');
+      removeNotificationsBySubstring('Internet connection');
     }
   }, 30000); // check every 30s
 }
@@ -1112,15 +1121,20 @@ async function handleAddCustomFeed(parsed) {
   // Re-focus main window
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
 
-  // Derive username from feedName or URL
-  const username = (feedName || parsed.username)
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-feed';
-
   const feeds = store.get('feeds');
-  // Prevent duplicates
-  if (feeds.find((f) => f.username === username && f.platform === 'custom')) {
-    throw new Error(`Already tracking "${feedName || username}" as a custom feed`);
+
+  // Prevent exact duplicate custom URL tracking while allowing multiple feeds from the same domain.
+  const normalizedPageUrl = normalizeUrlForComparison(pageUrl || parsed.fullUrl);
+  if (feeds.find((f) =>
+    f.platform === 'custom' && normalizeUrlForComparison(f.fullUrl || f.url) === normalizedPageUrl
+  )) {
+    throw new Error(`Already tracking this custom URL: ${pageUrl}`);
   }
+
+  // Keep a stable internal username (ID) derived from URL, not display feedName.
+  const baseUsername = (parsed.username || feedName)
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-feed';
+  const username = ensureUniqueCustomUsername(baseUsername, feeds, normalizedPageUrl);
 
   const feedKey = username.replace(/\//g, '-');
 
@@ -1151,6 +1165,52 @@ async function handleAddCustomFeed(parsed) {
 
   await generateFeed(feedKey, profileData, store, 'custom');
   return entry;
+}
+
+function normalizeUrlForComparison(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl);
+    u.hostname = u.hostname.toLowerCase();
+    if ((u.protocol === 'https:' && u.port === '443') || (u.protocol === 'http:' && u.port === '80')) {
+      u.port = '';
+    }
+    u.hash = '';
+    u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+
+    const sortedParams = [...u.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+    u.search = '';
+    for (const [key, value] of sortedParams) {
+      u.searchParams.append(key, value);
+    }
+    return u.toString();
+  } catch {
+    return String(rawUrl).trim();
+  }
+}
+
+function ensureUniqueCustomUsername(baseUsername, feeds, uniquenessSeed) {
+  const existing = new Set(
+    feeds
+      .filter((f) => (f.platform || 'instagram') === 'custom')
+      .map((f) => f.username)
+  );
+
+  if (!existing.has(baseUsername)) return baseUsername;
+
+  const shortHash = crypto
+    .createHash('sha1')
+    .update(uniquenessSeed || baseUsername)
+    .digest('hex')
+    .slice(0, 6);
+
+  let candidate = `${baseUsername}-${shortHash}`;
+  let counter = 2;
+  while (existing.has(candidate)) {
+    candidate = `${baseUsername}-${shortHash}-${counter}`;
+    counter += 1;
+  }
+  return candidate;
 }
 
 ipcMain.handle('start-custom-feed', async (_e, url) => {
