@@ -1,6 +1,6 @@
 {
   "name": "unsocial",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Social media to RSS Feed converter - Windows Desktop App",
   "main": "src/main.js",
   "license": "MIT",

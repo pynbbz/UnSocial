@@ -638,10 +638,7 @@ function createMainWindow() {
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
-  const savedWindowState = store.get('windowState') || {};
-  if (savedWindowState.isMaximized) {
-    mainWindow.maximize();
-  }
+  mainWindow.maximize();
 
   mainWindow.show();
   mainWindow.focus();
