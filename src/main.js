@@ -74,6 +74,7 @@ const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
+const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
 const tunnel = require('./tunnel');
 
 const crypto = require('crypto');
@@ -87,6 +88,7 @@ const store = new Store({
     tunnelName: 'unsocial-tunnel',
     tunnelAutoStart: false,
     feedToken: '',   // When non-empty, all feed-server requests require this token
+    feedPublicBaseUrl: '', // Optional origin for RSS/Atom self-links (LAN / port proxy); empty = localhost
     windowState: {
       width: 960,
       height: 700,
@@ -1557,6 +1559,20 @@ ipcMain.handle('generate-feed-token', () => {
   const token = crypto.randomBytes(32).toString('hex');
   store.set('feedToken', token);
   return token;
+});
+
+ipcMain.handle('get-feed-public-base-url', () => {
+  return store.get('feedPublicBaseUrl') || '';
+});
+
+ipcMain.handle('set-feed-public-base-url', (_e, raw) => {
+  const normalized = normalizeFeedPublicBaseUrlInput(raw);
+  store.set('feedPublicBaseUrl', normalized);
+  return normalized;
+});
+
+ipcMain.handle('get-resolved-feed-base-url', () => {
+  return resolveFeedBaseUrl(store);
 });
 
 // ── Notification IPC Handlers ─────────────────────────────────────────────

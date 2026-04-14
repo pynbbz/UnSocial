@@ -55,6 +55,10 @@ contextBridge.exposeInMainWorld('api', {
   setFeedToken: (token) => ipcRenderer.invoke('set-feed-token', token),
   generateFeedToken: () => ipcRenderer.invoke('generate-feed-token'),
 
+  getFeedPublicBaseUrl: () => ipcRenderer.invoke('get-feed-public-base-url'),
+  setFeedPublicBaseUrl: (url) => ipcRenderer.invoke('set-feed-public-base-url', url),
+  getResolvedFeedBaseUrl: () => ipcRenderer.invoke('get-resolved-feed-base-url'),
+
   // Utils
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 

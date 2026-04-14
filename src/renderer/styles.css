@@ -1166,6 +1166,24 @@ body {
 
 /* ── Tunnel URLs ──────────────────────────────────────────────────────── */
 
+.lan-feed-base-section {
+  margin-top: 12px;
+}
+
+.lan-feed-base-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.lan-feed-base-hint code {
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-input);
+}
+
 .tunnel-urls {
   margin-top: 10px;
   padding: 10px 14px;

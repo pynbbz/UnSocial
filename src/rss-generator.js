@@ -2,6 +2,7 @@ const { Feed } = require('feed');
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { resolveFeedBaseUrl } = require('./feed-url-base');
 
 /**
  * Generate an RSS/Atom feed XML file for a given profile.
@@ -14,8 +15,6 @@ async function generateFeed(username, profileData, store, platform) {
   if (!fs.existsSync(feedDir)) {
     fs.mkdirSync(feedDir, { recursive: true });
   }
-
-  const port = store.get('serverPort');
 
   // Platform-specific metadata
   const platformMeta = {
@@ -54,7 +53,8 @@ async function generateFeed(username, profileData, store, platform) {
 
   const meta = platformMeta[platform] || platformMeta.instagram;
   const siteUrl = meta.siteUrl;
-  const selfUrl = `http://localhost:${port}/feed/${username}`;
+  const feedBase = resolveFeedBaseUrl(store);
+  const selfUrl = `${feedBase}/feed/${username}`;
 
   const feed = new Feed({
     title: `${profileData.fullName || username} (@${username}) – ${meta.label}`,

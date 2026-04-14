@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { getFeedDir } = require('./rss-generator');
+const { resolveFeedBaseUrl } = require('./feed-url-base');
 
 let server = null;
 
@@ -66,13 +67,13 @@ function startFeedServer(store) {
       .filter((f) => f.endsWith('.rss.xml'))
       .map((f) => f.replace('.rss.xml', ''));
 
-    const port = store.get('serverPort');
+    const feedBase = resolveFeedBaseUrl(store);
     const token = store.get('feedToken');
     const tokenSuffix = token || '';
     const feeds = files.map((username) => ({
       username,
-      rss: `http://localhost:${port}/feed/${username}` + (tokenSuffix ? `?token=${tokenSuffix}` : ''),
-      atom: `http://localhost:${port}/feed/${username}?format=atom` + (tokenSuffix ? `&token=${tokenSuffix}` : ''),
+      rss: `${feedBase}/feed/${username}` + (tokenSuffix ? `?token=${tokenSuffix}` : ''),
+      atom: `${feedBase}/feed/${username}?format=atom` + (tokenSuffix ? `&token=${tokenSuffix}` : ''),
     }));
 
     res.json({ feeds });

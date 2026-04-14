@@ -56,6 +56,8 @@ let liLoggedIn = false;
 let tunnelDomain = '';
 let tunnelRunning = false;
 let feedToken = '';
+/** Resolved origin for local feed links (localhost or optional LAN base). */
+let resolvedFeedBase = '';
 
 // Active platform tab in feed list
 let activeGroup = null;
@@ -64,6 +66,7 @@ let activeGroup = null;
 
 (async function init() {
   serverPort = await window.api.getServerPort();
+  resolvedFeedBase = await window.api.getResolvedFeedBaseUrl();
 
   // Load notifications
   notifications = await window.api.getNotifications();
@@ -72,6 +75,11 @@ let activeGroup = null;
   // Load feed token
   feedToken = await window.api.getFeedToken();
   updateTokenUI();
+
+  const feedPublicBaseInput = $('#feed-public-base-input');
+  if (feedPublicBaseInput) {
+    feedPublicBaseInput.value = await window.api.getFeedPublicBaseUrl();
+  }
 
   // Load tunnel settings
   const tunnelSettings = await window.api.tunnelGetSettings();
@@ -193,7 +201,7 @@ function updateTunnelUrls() {
   const urlsEl = $('#tunnel-urls');
   if (!urlsEl) return;
   const tokenSuffix = tokenQueryString('?');
-  const localUrl = `http://localhost:${serverPort}/feed/<username>${tokenSuffix}`;
+  const localUrl = `${resolvedFeedBase || `http://localhost:${serverPort}`}/feed/<username>${tokenSuffix}`;
   const publicUrl = tunnelDomain ? `https://${tunnelDomain}/feed/<username>${tokenSuffix}` : 'Set a domain above to enable public URLs';
   urlsEl.innerHTML = `
     <div class="tunnel-url-row">
@@ -516,6 +524,19 @@ btnTokenClear.addEventListener('click', async () => {
   toast('Token removed — feeds are now public', 'success');
 });
 
+const btnSaveFeedPublicBase = $('#btn-save-feed-public-base');
+if (btnSaveFeedPublicBase) {
+  btnSaveFeedPublicBase.addEventListener('click', async () => {
+    const inp = $('#feed-public-base-input');
+    await window.api.setFeedPublicBaseUrl((inp && inp.value) || '');
+    if (inp) inp.value = await window.api.getFeedPublicBaseUrl();
+    resolvedFeedBase = await window.api.getResolvedFeedBaseUrl();
+    updateTunnelUrls();
+    await renderFeeds();
+    toast('LAN base URL saved. Refresh feeds to rewrite RSS/Atom files.', 'success');
+  });
+}
+
 btnCfLogin.addEventListener('click', async () => {
   btnCfLogin.disabled = true;
   btnCfLogin.textContent = '⏳ Running…';
@@ -727,7 +748,6 @@ function buildFeedCard(feed) {
                           platform === 'custom' ? 'Custom' : 'Instagram';
     const feedKey = feed.feedKey || feed.username.replace(/\//g, '-');
     const tokenSuffix = tokenQueryString('?');
-    const rssUrl = `http://localhost:${serverPort}/feed/${feedKey}${tokenSuffix}`;
     const publicUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
     const timeAgo = formatTimeAgo(feed.lastChecked);
 

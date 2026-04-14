@@ -234,6 +234,22 @@
           <!-- Tunnel URLs -->
           <div id="tunnel-urls" class="tunnel-urls"></div>
 
+          <!-- Optional LAN / advertised feed base URL -->
+          <div class="token-section lan-feed-base-section" id="lan-feed-base-section">
+            <div class="token-header">
+              <span class="token-icon">🏠</span>
+              <strong>LAN / advertised local URL</strong>
+            </div>
+            <div class="token-body">
+              <p class="lan-feed-base-hint">Optional. If you forward the feed port to your LAN IP (for example with <code>netsh interface portproxy</code>), set the URL clients should use here so RSS/Atom <code>atom:link rel="self"</code> and the discovery JSON match that address. Leave empty to keep <code>localhost</code> (default). After changing, refresh a feed so on-disk XML is rewritten.</p>
+              <div class="tunnel-settings-row">
+                <label class="tunnel-setting-label" for="feed-public-base-input">Base URL</label>
+                <input type="text" id="feed-public-base-input" class="tunnel-setting-input" placeholder="http://192.168.1.10:3845" autocomplete="off" />
+              </div>
+              <button type="button" class="btn btn-primary btn-sm" id="btn-save-feed-public-base">Save</button>
+            </div>
+          </div>
+
           <!-- Feed Authentication -->
           <div class="token-section" id="token-section">
             <div class="token-header">
