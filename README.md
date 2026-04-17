@@ -11,7 +11,7 @@
 
 - **Multi-platform** — Supports Instagram, Twitter/X, Facebook (pages, groups, events), and LinkedIn (profiles, companies)
 - **Local RSS server** — Serves feeds on `http://localhost:3845/feed/<username>` — works with any RSS reader
-- **Public access via Cloudflare Tunnel** — Optionally expose feeds to the internet through your own domain
+- **Public access via Cloudflare Tunnel or Tailscale Funnel** — Optionally expose feeds to the internet through your own domain (Cloudflare) or an auto-assigned `*.ts.net` hostname (Tailscale)
 - **Auto-refresh** — Smart staggered refresh keeps feeds up-to-date without hammering platforms
 - **OPML export** — One-click export for importing into other RSS readers
 - **Notification system** — Alerts for stale feeds, failed refreshes, and connectivity issues
@@ -54,9 +54,18 @@ The output will be in the `dist/` folder as a single portable `.exe`.
 2. **Add a feed** — Paste a profile URL (e.g. `https://www.instagram.com/natgeo/`) into the input bar and click **+ Add Feed**.
 3. **Subscribe** — Copy the local RSS URL from the feed card and add it to your RSS reader.
 
-### Public Access (Cloudflare Tunnel)
+### Public Access
 
-To make your feeds accessible from the internet (e.g. for phone-based RSS readers), you need to set up a Cloudflare Tunnel.
+To make your feeds accessible from the internet (e.g. for phone-based RSS readers), pick a tunnel provider in the **Public Access** panel. UnSocial supports two:
+
+| Provider | URL you get | Needs a custom domain? | Best for |
+|----------|-------------|-----------------------|----------|
+| **Cloudflare Tunnel** | `https://feeds.example.com` | Yes (on Cloudflare DNS) | Anyone who already owns a domain |
+| **Tailscale Funnel** | `https://<machine>.<tailnet>.ts.net` | No | Zero-config public URLs |
+
+Switch between them anytime with the **Cloudflare / Tailscale** toggle at the top of the Public Access panel — UnSocial stops the other provider when you switch.
+
+### Public Access — Cloudflare Tunnel
 
 #### Installing `cloudflared`
 
@@ -100,6 +109,49 @@ cloudflared --version
 3. Follow the guided steps to authenticate, create the tunnel, and route DNS.
 4. Click **▶ Start Tunnel** — your feeds will be available at `https://your-domain/feed/<username>`.
 
+### Public Access — Tailscale Funnel
+
+Tailscale Funnel exposes a local port at a `https://<machine>.<tailnet>.ts.net` URL without owning a domain. Setup takes a minute.
+
+#### Installing Tailscale
+
+**Windows (winget — recommended):**
+```bash
+winget install Tailscale.Tailscale
+```
+
+**macOS (Homebrew):**
+```bash
+brew install --cask tailscale
+```
+
+**Linux, manual downloads, and other platforms:** see [tailscale.com/download](https://tailscale.com/download).
+
+After install, sign in by running `tailscale up` or opening the GUI tray icon.
+
+#### Enable Funnel + HTTPS on your tailnet
+
+Funnel is opt-in per-tailnet and requires HTTPS to be enabled. This is a one-time step in the [admin console](https://login.tailscale.com/admin):
+
+1. **Enable HTTPS certificates** — go to **DNS** and click *Enable HTTPS*.
+2. **Grant the `funnel` attribute to this device** — in **Access Controls**, add a `nodeAttrs` grant, for example:
+
+```jsonc
+{
+  "nodeAttrs": [
+    { "target": ["autogroup:member"], "attr": ["funnel"] }
+  ]
+}
+```
+
+#### Start the tunnel in UnSocial
+
+1. Switch the Public Access toggle to **Tailscale**.
+2. Click **⚙️ Setup** and verify that each step shows a ✓ (install, login, funnel enabled).
+3. Click **▶ Start Tunnel** — UnSocial runs `tailscale funnel --bg <port>` and publishes your feed server. Your URLs now look like `https://<machine>.<tailnet>.ts.net/feed/<username>`.
+
+Behind the scenes, Tailscale Funnel is a daemon-managed persistent forward, so UnSocial doesn't need to keep a child process alive. Stopping the tunnel runs `tailscale funnel reset`.
+
 #### Feed Authentication
 
 If you're exposing feeds publicly, you can protect them with a token so only you (and your RSS reader) can access them.
@@ -125,7 +177,9 @@ UnSocial/
 │   ├── preload.js       # Context bridge (IPC API)
 │   ├── feed-server.js   # Local Express RSS server
 │   ├── rss-generator.js # RSS/Atom XML generation
-│   ├── tunnel.js        # Cloudflare Tunnel management
+│   ├── tunnel.js        # Tunnel dispatcher (Cloudflare / Tailscale)
+│   ├── tunnel-cloudflare.js
+│   ├── tunnel-tailscale.js
 │   ├── scraper.js       # Instagram scraper
 │   ├── scraper-twitter.js
 │   ├── scraper-facebook.js
@@ -144,7 +198,8 @@ All settings are persisted via `electron-store` in the app's user data directory
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `serverPort` | `3845` | Local RSS server port |
-| `tunnelDomain` | *(empty)* | Your custom domain for public feed access |
+| `tunnelProvider` | `cloudflare` | Active tunnel provider: `cloudflare` or `tailscale` |
+| `tunnelDomain` | *(empty)* | Your custom domain for public feed access (Cloudflare only) |
 | `tunnelName` | `unsocial-tunnel` | Cloudflare Tunnel name |
 | `checkIntervalMinutes` | `30` | Base refresh interval (actual timing is randomized) |
 | `feedToken` | *(empty)* | When set, all feed server requests require this token |

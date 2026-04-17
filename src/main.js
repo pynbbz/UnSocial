@@ -84,6 +84,7 @@ const store = new Store({
     feeds: [],       // Array of { url, username, alias, lastChecked }
     serverPort: 3845,
     checkIntervalMinutes: 30,
+    tunnelProvider: 'cloudflare', // 'cloudflare' | 'tailscale'
     tunnelDomain: '',
     tunnelName: 'unsocial-tunnel',
     tunnelAutoStart: false,
@@ -183,10 +184,13 @@ function sendNotificationsToRenderer() {
   }
 }
 
+// Last known tunnel status, mirrored from provider callbacks so the tray
+// icon can be recalculated synchronously.
+let lastTunnelStatus = 'stopped';
+
 function recalcTrayIcon() {
   try {
-    const tunnelState = tunnel.getTunnelState(store);
-    const tunnelOk = tunnelState.status === 'running';
+    const tunnelOk = lastTunnelStatus === 'running';
     const unresolvedErrors = notificationLog.some(n => !n.resolved && n.type === 'error');
     hasActiveErrors = unresolvedErrors;
     updateTrayIcon(tunnelOk && !unresolvedErrors);
@@ -422,6 +426,11 @@ app.whenReady().then(async () => {
   // Forward tunnel status changes to the renderer + update tray icon
   tunnel.onTunnelStatusChange((data) => {
     try {
+      // Only track status updates from the currently active provider so a
+      // backgrounded one doesn't clobber the tray icon.
+      if (!data.provider || data.provider === tunnel.getProviderId(store)) {
+        if (data.status) lastTunnelStatus = data.status;
+      }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('tunnel-status', data);
       }
@@ -438,62 +447,77 @@ app.whenReady().then(async () => {
 
   // Auto-start tunnel — run through full setup chain automatically
   (async () => {
-    // Kill any orphaned cloudflared.exe left over from a previous session
-    tunnel.killOrphanedCloudflared();
+    const providerId = tunnel.getProviderId(store);
+
+    // Kill any orphaned child processes from a previous session (cloudflared
+    // specifically; tailscale runs as a daemon and doesn't need this).
+    tunnel.killOrphaned(store);
 
     const sendStatus = (msg) => {
-      console.log('[Tunnel] ' + msg);
+      console.log(`[Tunnel:${providerId}] ` + msg);
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('tunnel-status', { status: 'starting', message: msg });
+        mainWindow.webContents.send('tunnel-status', { status: 'starting', message: msg, provider: providerId });
       }
     };
 
     try {
-      const installed = await tunnel.checkCloudflaredInstalled();
+      const installed = await tunnel.checkInstalled(store);
       if (!installed.installed) {
-        console.log('[Tunnel] cloudflared not installed — skipping auto-start');
+        const binName = providerId === 'tailscale' ? 'tailscale' : 'cloudflared';
+        console.log(`[Tunnel] ${binName} not installed — skipping auto-start`);
         return;
       }
-      sendStatus('cloudflared found (' + installed.version + ')');
+      sendStatus(`${providerId} client found (` + installed.version + ')');
 
-      // Check authentication (cert.pem)
-      if (!tunnel.checkAuthenticated()) {
-        sendStatus('Not authenticated — opening login...');
-        const loginResult = await tunnel.runSetupCommand(['tunnel', 'login']);
-        if (!loginResult.success) {
-          console.log('[Tunnel] Login failed:', loginResult.output);
+      if (providerId === 'cloudflare') {
+        // Check authentication (cert.pem)
+        if (!(await tunnel.checkAuthenticated(store))) {
+          sendStatus('Not authenticated — opening login...');
+          const loginResult = await tunnel.runWizardStep(store, 'login');
+          if (!loginResult.success) {
+            console.log('[Tunnel] Login failed:', loginResult.output);
+            return;
+          }
+          sendStatus('Authentication complete');
+        }
+
+        // Check if tunnel exists, create if needed
+        const tunnelName = store.get('tunnelName');
+        const domain = store.get('tunnelDomain');
+        const setup = await tunnel.checkSetup(store);
+        if (!setup.exists) {
+          sendStatus('Creating tunnel "' + tunnelName + '"...');
+          const createResult = await tunnel.runWizardStep(store, 'create');
+          if (!createResult.success && !createResult.output.includes('already exists')) {
+            console.log('[Tunnel] Create failed:', createResult.output);
+            return;
+          }
+          sendStatus('Tunnel created');
+        }
+
+        // Route DNS (idempotent — safe to re-run)
+        sendStatus('Routing DNS for ' + domain + '...');
+        await tunnel.runWizardStep(store, 'dns');
+      } else if (providerId === 'tailscale') {
+        // For Tailscale the only prerequisite we can verify is that the node
+        // is logged in — funnel policy / HTTPS must be enabled in the admin
+        // console beforehand. We surface errors via the tunnel log.
+        if (!(await tunnel.checkAuthenticated(store))) {
+          console.log('[Tunnel] tailscale not logged in — skipping auto-start');
+          sendStatus('Tailscale not logged in');
           return;
         }
-        sendStatus('Authentication complete');
       }
-
-      // Check if tunnel exists, create if needed
-      const tunnelName = store.get('tunnelName');
-      const domain = store.get('tunnelDomain');
-      const setup = await tunnel.checkTunnelSetup(store);
-      if (!setup.exists) {
-        sendStatus('Creating tunnel "' + tunnelName + '"...');
-        const createResult = await tunnel.runSetupCommand(['tunnel', 'create', tunnelName]);
-        if (!createResult.success && !createResult.output.includes('already exists')) {
-          console.log('[Tunnel] Create failed:', createResult.output);
-          return;
-        }
-        sendStatus('Tunnel created');
-      }
-
-      // Route DNS (idempotent — safe to re-run)
-      sendStatus('Routing DNS for ' + domain + '...');
-      await tunnel.runSetupCommand(['tunnel', 'route', 'dns', tunnelName, domain]);
 
       // Start tunnel
       sendStatus('Starting tunnel...');
-      tunnel.startTunnel(store);
+      await tunnel.startTunnel(store);
 
       // Wait for tunnel to connect, then refresh all feeds
       let tunnelPollAttempts = 0;
       const tunnelPollInterval = setInterval(async () => {
         tunnelPollAttempts++;
-        const tState = tunnel.getTunnelState(store);
+        const tState = await tunnel.getTunnelState(store);
         if (tState.status === 'running') {
           clearInterval(tunnelPollInterval);
           console.log('[Tunnel] Connected — refreshing all feeds');
@@ -549,15 +573,17 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  // Ensure cloudflared is fully killed before the app exits
-  tunnel.stopTunnel();
+  // Ensure any child tunnel process is fully killed before the app exits.
+  // For Tailscale (daemon-managed), this is a no-op — Funnel stays configured
+  // across sessions, which matches user expectations for that provider.
+  Promise.resolve(tunnel.stopTunnel(store)).catch(() => {});
 });
 
 app.on('window-all-closed', () => {
   if (refreshTimeout) clearTimeout(refreshTimeout);
   if (internetCheckInterval) clearInterval(internetCheckInterval);
   if (staleFeedCheckInterval) clearInterval(staleFeedCheckInterval);
-  tunnel.stopTunnel();
+  Promise.resolve(tunnel.stopTunnel(store)).catch(() => {});
   stopFeedServer();
   app.quit();
 });
@@ -1489,48 +1515,38 @@ function escapeXml(str) {
 // ── Tunnel IPC Handlers ────────────────────────────────────────────────────
 
 ipcMain.handle('tunnel-check-installed', async () => {
-  return tunnel.checkCloudflaredInstalled();
+  return tunnel.checkInstalled(store);
 });
 
-ipcMain.handle('tunnel-check-authenticated', () => {
-  return { authenticated: tunnel.checkAuthenticated() };
+ipcMain.handle('tunnel-check-authenticated', async () => {
+  return { authenticated: await tunnel.checkAuthenticated(store) };
 });
 
 ipcMain.handle('tunnel-check-setup', async () => {
-  return tunnel.checkTunnelSetup(store);
+  return tunnel.checkSetup(store);
 });
 
 ipcMain.handle('tunnel-run-setup', async (_e, step) => {
-  const tunnelName = store.get('tunnelName');
-  const domain = store.get('tunnelDomain');
-
-  switch (step) {
-    case 'login':
-      return tunnel.runSetupCommand(['tunnel', 'login']);
-    case 'create':
-      return tunnel.runSetupCommand(['tunnel', 'create', tunnelName]);
-    case 'dns':
-      return tunnel.runSetupCommand(['tunnel', 'route', 'dns', tunnelName, domain]);
-    default:
-      throw new Error(`Unknown setup step: ${step}`);
-  }
+  return tunnel.runWizardStep(store, step);
 });
 
-ipcMain.handle('tunnel-start', () => {
+ipcMain.handle('tunnel-start', async () => {
   return tunnel.startTunnel(store);
 });
 
-ipcMain.handle('tunnel-stop', () => {
-  tunnel.stopTunnel();
+ipcMain.handle('tunnel-stop', async () => {
+  await tunnel.stopTunnel(store);
   return { status: 'stopped' };
 });
 
-ipcMain.handle('tunnel-state', () => {
+ipcMain.handle('tunnel-state', async () => {
   return tunnel.getTunnelState(store);
 });
 
 ipcMain.handle('tunnel-get-settings', () => {
   return {
+    provider: tunnel.getProviderId(store),
+    availableProviders: tunnel.getAvailableProviders(),
     domain: store.get('tunnelDomain'),
     tunnelName: store.get('tunnelName'),
     autoStart: store.get('tunnelAutoStart'),
@@ -1542,6 +1558,25 @@ ipcMain.handle('tunnel-save-settings', (_e, settings) => {
   if (settings.tunnelName) store.set('tunnelName', settings.tunnelName);
   if (typeof settings.autoStart === 'boolean') store.set('tunnelAutoStart', settings.autoStart);
   return true;
+});
+
+ipcMain.handle('tunnel-get-provider', () => {
+  return {
+    provider: tunnel.getProviderId(store),
+    available: tunnel.getAvailableProviders(),
+  };
+});
+
+ipcMain.handle('tunnel-set-provider', async (_e, providerId) => {
+  const result = await tunnel.setProvider(store, providerId);
+  // Notify the renderer so it can re-read state for the new provider.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tunnel-status', {
+      status: 'stopped',
+      provider: result.provider,
+    });
+  }
+  return result;
 });
 
 // ── Feed Token IPC Handlers ───────────────────────────────────────────

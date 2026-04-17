@@ -257,6 +257,49 @@ body {
   justify-content: flex-end;
 }
 
+.tunnel-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.tunnel-provider-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.tunnel-provider-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-card, #1e1e24);
+}
+
+.tunnel-provider-option {
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tunnel-provider-option + .tunnel-provider-option {
+  border-left: 1px solid var(--border);
+}
+
+.tunnel-provider-option:hover {
+  color: var(--text);
+}
+
+.tunnel-provider-option.is-active {
+  background: var(--accent, #4a9eff);
+  color: #fff;
+}
+
 /* ── Notification Bell ────────────────────────────────────────────────── */
 
 .notification-wrapper {

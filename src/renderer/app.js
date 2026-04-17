@@ -32,6 +32,17 @@ const btnCfCreate = $('#btn-cf-create');
 const btnCfDns = $('#btn-cf-dns');
 const linkCloudflared = $('#link-cloudflared');
 
+// Provider switcher
+const providerButtons = document.querySelectorAll('.tunnel-provider-option');
+const wizardProviderSections = document.querySelectorAll('.wizard-provider-steps');
+let tunnelProvider = 'cloudflare';
+
+// Tailscale wizard elements
+const btnTsLogin = $('#btn-ts-login');
+const btnTsVerify = $('#btn-ts-verify');
+const linkTailscale = $('#link-tailscale');
+const linkTailscaleFunnel = $('#link-tailscale-funnel');
+
 // Public Access overlay elements
 const btnPublicAccess = $('#btn-public-access');
 const publicAccessOverlay = $('#public-access-overlay');
@@ -83,7 +94,9 @@ let activeGroup = null;
 
   // Load tunnel settings
   const tunnelSettings = await window.api.tunnelGetSettings();
+  tunnelProvider = tunnelSettings.provider || 'cloudflare';
   tunnelDomain = tunnelSettings.domain || '';
+  updateProviderUI();
   updateDomainDisplay();
 
   // Populate domain input
@@ -95,8 +108,13 @@ let activeGroup = null;
   $('#wizard-domain').textContent = tunnelDomain || '<your-domain>';
   $('#wizard-tunnel-name').textContent = tunnelSettings.tunnelName || 'unsocial-tunnel';
 
-  // Check tunnel state
+  // Check tunnel state — for Tailscale the domain comes from the daemon,
+  // not from user settings, so pull it from the live state too.
   const tState = await window.api.tunnelState();
+  if (tunnelProvider === 'tailscale' && tState.domain) {
+    tunnelDomain = tState.domain;
+    updateTailscaleHostnameDisplay();
+  }
   updateTunnelUI(tState.status);
   updatePublicAccessIcon();
 
@@ -130,16 +148,39 @@ window.api.onLoginStatus(({ platform, loggedIn }) => {
   renderFeeds();
 });
 
-window.api.onTunnelStatus(({ status }) => {
+window.api.onTunnelStatus(async ({ status, provider }) => {
+  // Ignore stray events from an inactive provider
+  if (provider && provider !== tunnelProvider) return;
   updateTunnelUI(status);
-  // Update DNS step checkmark when tunnel connects
+
   if (status === 'running') {
-    const dnsStatus = $('#step-dns-status');
-    if (dnsStatus) {
-      dnsStatus.textContent = '✓ Routed';
-      dnsStatus.className = 'step-status ok';
-      const dnsStep = $('#wizard-step-dns');
-      if (dnsStep) dnsStep.classList.add('done');
+    if (tunnelProvider === 'cloudflare') {
+      // Update DNS step checkmark when the tunnel connects
+      const dnsStatus = $('#step-dns-status');
+      if (dnsStatus) {
+        dnsStatus.textContent = '✓ Routed';
+        dnsStatus.className = 'step-status ok';
+        const dnsStep = $('#wizard-step-dns');
+        if (dnsStep) dnsStep.classList.add('done');
+      }
+    } else if (tunnelProvider === 'tailscale') {
+      // Tailscale publishes the hostname when funnel is active; refresh it.
+      try {
+        const tState = await window.api.tunnelState();
+        if (tState.domain) {
+          tunnelDomain = tState.domain;
+          updateDomainDisplay();
+          updateTunnelUrls();
+          renderFeeds();
+        }
+        const verify = $('#step-ts-verify-status');
+        if (verify) {
+          verify.textContent = '✓ Funnel live';
+          verify.className = 'step-status ok';
+          const step = $('#wizard-ts-step-verify');
+          if (step) step.classList.add('done');
+        }
+      } catch (_) {}
     }
   }
 });
@@ -190,7 +231,53 @@ function updatePublicAccessIcon() {
 function updateDomainDisplay() {
   const wizardDomain = $('#wizard-domain');
   if (wizardDomain) wizardDomain.textContent = tunnelDomain || '<your-domain>';
+  updateTailscaleHostnameDisplay();
 }
+
+function updateTailscaleHostnameDisplay() {
+  const el = $('#wizard-ts-hostname');
+  if (!el) return;
+  el.textContent = (tunnelProvider === 'tailscale' && tunnelDomain)
+    ? tunnelDomain
+    : '<machine>.<tailnet>.ts.net';
+}
+
+function updateProviderUI() {
+  providerButtons.forEach((btn) => {
+    const isActive = btn.dataset.provider === tunnelProvider;
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  wizardProviderSections.forEach((section) => {
+    section.style.display = section.dataset.provider === tunnelProvider ? '' : 'none';
+  });
+}
+
+providerButtons.forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const newProvider = btn.dataset.provider;
+    if (newProvider === tunnelProvider) return;
+    const res = await window.api.tunnelSetProvider(newProvider);
+    tunnelProvider = res.provider || newProvider;
+    updateProviderUI();
+
+    // Pull fresh state + settings for the new provider (domain may change).
+    const settings = await window.api.tunnelGetSettings();
+    tunnelDomain = settings.domain || '';
+    const tState = await window.api.tunnelState();
+    if (tunnelProvider === 'tailscale' && tState.domain) {
+      tunnelDomain = tState.domain;
+    }
+    updateDomainDisplay();
+    updateTunnelUI(tState.status);
+    updateTunnelUrls();
+    await renderFeeds();
+    if (tunnelWizard.style.display !== 'none') {
+      runSetupChecks();
+    }
+    toast(`Switched to ${newProvider === 'tailscale' ? 'Tailscale' : 'Cloudflare'}`, 'success');
+  });
+});
 
 function tokenQueryString(prefix) {
   if (!feedToken) return '';
@@ -475,6 +562,61 @@ linkCloudflared.addEventListener('click', (e) => {
   window.api.openExternal('https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/');
 });
 
+if (linkTailscale) {
+  linkTailscale.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.api.openExternal('https://tailscale.com/download');
+  });
+}
+
+if (linkTailscaleFunnel) {
+  linkTailscaleFunnel.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.api.openExternal('https://login.tailscale.com/admin/dns');
+  });
+}
+
+if (btnTsLogin) {
+  btnTsLogin.addEventListener('click', async () => {
+    btnTsLogin.disabled = true;
+    btnTsLogin.textContent = '⏳ Opening login…';
+    const r = await window.api.tunnelRunSetup('login');
+    $('#step-ts-login-status').textContent = r.success ? '✓ Done' : '✗ ' + truncate(r.output || 'Failed', 80);
+    $('#step-ts-login-status').className = 'step-status ' + (r.success ? 'ok' : 'fail');
+    btnTsLogin.disabled = false;
+    btnTsLogin.textContent = 'Run Login';
+    if (r.success) runSetupChecks();
+  });
+}
+
+if (btnTsVerify) {
+  btnTsVerify.addEventListener('click', async () => {
+    btnTsVerify.disabled = true;
+    btnTsVerify.textContent = '⏳ Checking…';
+    const setup = await window.api.tunnelCheckSetup();
+    const statusEl = $('#step-ts-verify-status');
+    if (setup.exists) {
+      statusEl.textContent = '✓ Ready';
+      statusEl.className = 'step-status ok';
+      $('#wizard-ts-step-verify').classList.add('done');
+      $('#wizard-ts-step-enable').classList.add('done');
+      $('#step-ts-enable-status').textContent = '✓ Funnel allowed';
+      $('#step-ts-enable-status').className = 'step-status ok';
+      if (setup.hostname) {
+        tunnelDomain = setup.hostname;
+        updateDomainDisplay();
+        updateTunnelUrls();
+        renderFeeds();
+      }
+    } else {
+      statusEl.textContent = '✗ ' + truncate(setup.output || 'Funnel not configured', 80);
+      statusEl.className = 'step-status fail';
+    }
+    btnTsVerify.disabled = false;
+    btnTsVerify.textContent = 'Verify';
+  });
+}
+
 // ── Token Authentication ────────────────────────────────────────────────
 
 const tokenDisplay = $('#token-display');
@@ -570,6 +712,10 @@ btnCfDns.addEventListener('click', async () => {
 });
 
 async function runSetupChecks() {
+  if (tunnelProvider === 'tailscale') {
+    return runTailscaleSetupChecks();
+  }
+
   // Step 1: Check cloudflared installed
   const installed = await window.api.tunnelCheckInstalled();
   const installStatus = $('#step-install-status');
@@ -607,6 +753,77 @@ async function runSetupChecks() {
       }
     }
   }
+}
+
+async function runTailscaleSetupChecks() {
+  // Step 1: Tailscale CLI installed?
+  const installed = await window.api.tunnelCheckInstalled();
+  const installStatus = $('#step-ts-install-status');
+  if (installStatus) {
+    installStatus.textContent = installed.installed ? `✓ ${installed.version}` : '✗ Not found';
+    installStatus.className = 'step-status ' + (installed.installed ? 'ok' : 'fail');
+  }
+  const installStep = $('#wizard-ts-step-install');
+  if (installStep) installStep.classList.toggle('done', installed.installed);
+
+  if (!installed.installed) return;
+
+  // Step 2: Logged in?
+  const auth = await window.api.tunnelCheckAuthenticated();
+  const loginStatus = $('#step-ts-login-status');
+  if (loginStatus) {
+    if (auth.authenticated) {
+      loginStatus.textContent = '✓ Logged in';
+      loginStatus.className = 'step-status ok';
+    } else {
+      loginStatus.textContent = '✗ Not logged in';
+      loginStatus.className = 'step-status fail';
+    }
+  }
+  const loginStep = $('#wizard-ts-step-login');
+  if (loginStep) loginStep.classList.toggle('done', auth.authenticated);
+
+  if (!auth.authenticated) return;
+
+  // Step 3 & 4: Funnel policy + HTTPS enabled
+  const setup = await window.api.tunnelCheckSetup();
+  const enableStatus = $('#step-ts-enable-status');
+  const verifyStatus = $('#step-ts-verify-status');
+  if (setup.exists) {
+    if (enableStatus) {
+      enableStatus.textContent = '✓ Funnel allowed';
+      enableStatus.className = 'step-status ok';
+    }
+    if (verifyStatus) {
+      verifyStatus.textContent = '✓ Ready';
+      verifyStatus.className = 'step-status ok';
+    }
+    const enableStep = $('#wizard-ts-step-enable');
+    const verifyStep = $('#wizard-ts-step-verify');
+    if (enableStep) enableStep.classList.add('done');
+    if (verifyStep) verifyStep.classList.add('done');
+
+    // Populate hostname into the UI now that we know it
+    if (setup.hostname) {
+      tunnelDomain = setup.hostname;
+      updateDomainDisplay();
+      updateTunnelUrls();
+    }
+  } else {
+    if (enableStatus) {
+      enableStatus.textContent = setup.output ? '✗ ' + truncate(setup.output, 80) : 'Needs admin-console setup';
+      enableStatus.className = 'step-status fail';
+    }
+    if (verifyStatus) {
+      verifyStatus.textContent = '';
+      verifyStatus.className = 'step-status';
+    }
+  }
+}
+
+function truncate(str, max) {
+  if (!str) return '';
+  return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
 // ── Add Feed ────────────────────────────────────────────────────────────

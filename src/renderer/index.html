@@ -172,6 +172,19 @@
           <button class="btn-close-overlay" id="btn-close-overlay" title="Close">✕</button>
         </div>
         <div class="public-access-content">
+          <!-- Tunnel Provider Selector -->
+          <div class="tunnel-provider-row">
+            <span class="tunnel-provider-label">Tunnel provider:</span>
+            <div class="tunnel-provider-switch" role="tablist">
+              <button type="button" class="tunnel-provider-option is-active" id="provider-cloudflare" data-provider="cloudflare" role="tab" aria-selected="true">
+                Cloudflare
+              </button>
+              <button type="button" class="tunnel-provider-option" id="provider-tailscale" data-provider="tailscale" role="tab" aria-selected="false">
+                Tailscale
+              </button>
+            </div>
+          </div>
+
           <div class="tunnel-controls-row">
             <button id="btn-tunnel-setup" class="btn btn-outline btn-sm" title="Setup wizard">⚙️ Setup</button>
             <button id="btn-tunnel-toggle" class="btn btn-primary btn-sm">▶ Start Tunnel</button>
@@ -179,54 +192,110 @@
 
           <!-- Setup Wizard (hidden by default) -->
           <div id="tunnel-setup-wizard" class="tunnel-wizard" style="display:none;">
-            <div class="wizard-step wizard-settings-step">
-              <span class="step-num">⚙</span>
-              <div class="step-content">
-                <div class="step-title">Tunnel Settings</div>
-                <div class="tunnel-settings-row">
-                  <label class="tunnel-setting-label" for="tunnel-domain-input">Domain</label>
-                  <input type="text" id="tunnel-domain-input" class="tunnel-setting-input" placeholder="example.com" autocomplete="off" />
+            <!-- Cloudflare wizard -->
+            <div class="wizard-provider-steps" data-provider="cloudflare">
+              <div class="wizard-step wizard-settings-step">
+                <span class="step-num">⚙</span>
+                <div class="step-content">
+                  <div class="step-title">Tunnel Settings</div>
+                  <div class="tunnel-settings-row">
+                    <label class="tunnel-setting-label" for="tunnel-domain-input">Domain</label>
+                    <input type="text" id="tunnel-domain-input" class="tunnel-setting-input" placeholder="example.com" autocomplete="off" />
+                  </div>
+                  <div class="tunnel-settings-row">
+                    <label class="tunnel-setting-label" for="tunnel-name-input">Tunnel Name</label>
+                    <input type="text" id="tunnel-name-input" class="tunnel-setting-input" placeholder="unsocial-tunnel" autocomplete="off" />
+                  </div>
+                  <button class="btn btn-primary btn-sm" id="btn-save-tunnel-settings">Save</button>
                 </div>
-                <div class="tunnel-settings-row">
-                  <label class="tunnel-setting-label" for="tunnel-name-input">Tunnel Name</label>
-                  <input type="text" id="tunnel-name-input" class="tunnel-setting-input" placeholder="unsocial-tunnel" autocomplete="off" />
+              </div>
+              <div class="wizard-step" id="wizard-step-install">
+                <span class="step-num">1</span>
+                <div class="step-content">
+                  <div class="step-title">Install cloudflared</div>
+                  <div class="step-desc">Download from <a id="link-cloudflared" href="#">cloudflare.com</a> &amp; add to PATH</div>
+                  <span class="step-status" id="step-install-status">checking…</span>
                 </div>
-                <button class="btn btn-primary btn-sm" id="btn-save-tunnel-settings">Save</button>
+              </div>
+              <div class="wizard-step" id="wizard-step-login">
+                <span class="step-num">2</span>
+                <div class="step-content">
+                  <div class="step-title">Authenticate with Cloudflare</div>
+                  <div class="step-desc">Opens a browser to authorize your account</div>
+                  <button class="btn btn-outline btn-sm" id="btn-cf-login">Run Login</button>
+                  <span class="step-status" id="step-login-status"></span>
+                </div>
+              </div>
+              <div class="wizard-step" id="wizard-step-create">
+                <span class="step-num">3</span>
+                <div class="step-content">
+                  <div class="step-title">Create tunnel</div>
+                  <div class="step-desc">Creates tunnel named "<span id="wizard-tunnel-name">unsocial-tunnel</span>"</div>
+                  <button class="btn btn-outline btn-sm" id="btn-cf-create">Create Tunnel</button>
+                  <span class="step-status" id="step-create-status"></span>
+                </div>
+              </div>
+              <div class="wizard-step" id="wizard-step-dns">
+                <span class="step-num">4</span>
+                <div class="step-content">
+                  <div class="step-title">Route DNS</div>
+                  <div class="step-desc">Points <code id="wizard-domain">your-domain</code> → this tunnel</div>
+                  <button class="btn btn-outline btn-sm" id="btn-cf-dns">Route DNS</button>
+                  <span class="step-status" id="step-dns-status"></span>
+                </div>
               </div>
             </div>
-            <div class="wizard-step" id="wizard-step-install">
-              <span class="step-num">1</span>
-              <div class="step-content">
-                <div class="step-title">Install cloudflared</div>
-                <div class="step-desc">Download from <a id="link-cloudflared" href="#">cloudflare.com</a> &amp; add to PATH</div>
-                <span class="step-status" id="step-install-status">checking…</span>
+
+            <!-- Tailscale wizard -->
+            <div class="wizard-provider-steps" data-provider="tailscale" style="display:none;">
+              <div class="wizard-step wizard-settings-step">
+                <span class="step-num">ℹ</span>
+                <div class="step-content">
+                  <div class="step-title">Tailscale Funnel</div>
+                  <div class="step-desc">
+                    Tailscale Funnel exposes this feed server at
+                    <code id="wizard-ts-hostname">&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code>.
+                    No custom domain needed — the URL is assigned by your tailnet.
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="wizard-step" id="wizard-step-login">
-              <span class="step-num">2</span>
-              <div class="step-content">
-                <div class="step-title">Authenticate with Cloudflare</div>
-                <div class="step-desc">Opens a browser to authorize your account</div>
-                <button class="btn btn-outline btn-sm" id="btn-cf-login">Run Login</button>
-                <span class="step-status" id="step-login-status"></span>
+              <div class="wizard-step" id="wizard-ts-step-install">
+                <span class="step-num">1</span>
+                <div class="step-content">
+                  <div class="step-title">Install Tailscale</div>
+                  <div class="step-desc">Download from <a id="link-tailscale" href="#">tailscale.com/download</a></div>
+                  <span class="step-status" id="step-ts-install-status">checking…</span>
+                </div>
               </div>
-            </div>
-            <div class="wizard-step" id="wizard-step-create">
-              <span class="step-num">3</span>
-              <div class="step-content">
-                <div class="step-title">Create tunnel</div>
-                <div class="step-desc">Creates tunnel named "<span id="wizard-tunnel-name">unsocial-tunnel</span>"</div>
-                <button class="btn btn-outline btn-sm" id="btn-cf-create">Create Tunnel</button>
-                <span class="step-status" id="step-create-status"></span>
+              <div class="wizard-step" id="wizard-ts-step-login">
+                <span class="step-num">2</span>
+                <div class="step-content">
+                  <div class="step-title">Log in to Tailscale</div>
+                  <div class="step-desc">Opens a browser to authorize this machine on your tailnet</div>
+                  <button class="btn btn-outline btn-sm" id="btn-ts-login">Run Login</button>
+                  <span class="step-status" id="step-ts-login-status"></span>
+                </div>
               </div>
-            </div>
-            <div class="wizard-step" id="wizard-step-dns">
-              <span class="step-num">4</span>
-              <div class="step-content">
-                <div class="step-title">Route DNS</div>
-                <div class="step-desc">Points <code id="wizard-domain">your-domain</code> → this tunnel</div>
-                <button class="btn btn-outline btn-sm" id="btn-cf-dns">Route DNS</button>
-                <span class="step-status" id="step-dns-status"></span>
+              <div class="wizard-step" id="wizard-ts-step-enable">
+                <span class="step-num">3</span>
+                <div class="step-content">
+                  <div class="step-title">Enable Funnel &amp; HTTPS for your tailnet</div>
+                  <div class="step-desc">
+                    In the Tailscale admin console, enable HTTPS certificates
+                    (DNS tab) and grant the <code>funnel</code> policy attribute
+                    to this device. <a id="link-tailscale-funnel" href="#">Open admin console</a>.
+                  </div>
+                  <span class="step-status" id="step-ts-enable-status"></span>
+                </div>
+              </div>
+              <div class="wizard-step" id="wizard-ts-step-verify">
+                <span class="step-num">4</span>
+                <div class="step-content">
+                  <div class="step-title">Verify Funnel is ready</div>
+                  <div class="step-desc">Checks that funnel status reports this node can publish.</div>
+                  <button class="btn btn-outline btn-sm" id="btn-ts-verify">Verify</button>
+                  <span class="step-status" id="step-ts-verify-status"></span>
+                </div>
               </div>
             </div>
           </div>
