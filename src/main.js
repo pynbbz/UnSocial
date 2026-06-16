@@ -236,15 +236,22 @@ function startInternetMonitor() {
 
 let staleFeedCheckInterval = null;
 
+const MAX_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours hard cap
+const BOOST_MAX_STALE_MS = 2 * 60 * 60 * 1000; // 2 hours for boosted feeds
+const BOOST_PRIORITY_MS = 45 * 60 * 1000; // boosted feeds sort ~45 min older
+
+function getMaxStaleMs(feed) {
+  return feed.boosted ? BOOST_MAX_STALE_MS : MAX_STALE_MS;
+}
+
 function checkStaleFeedsNotifications() {
   try {
     const feeds = store.get('feeds');
     const now = Date.now();
-    const SIX_HOURS = 6 * 60 * 60 * 1000;
     for (const feed of feeds) {
       const lastChecked = feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
       const age = now - lastChecked;
-      if (age > SIX_HOURS) {
+      if (age > getMaxStaleMs(feed)) {
         // Only add notification if there isn't already an unresolved one for this feed about staleness
         const existing = notificationLog.find(n =>
           !n.resolved && n.message.includes(`@${feed.username}`) && n.message.includes('stale')
@@ -273,41 +280,44 @@ function startStaleFeedMonitor() {
 let refreshTimeout = null;
 let isRefreshing = false;
 
-function getRandomInterval() {
-  // Random interval between 25 and 65 minutes (in ms)
-  const minMinutes = 25;
-  const maxMinutes = 65;
+function getFeedLastCheckedMs(feed) {
+  return feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
+}
+
+function getEffectiveLastCheckedMs(feed) {
+  const base = getFeedLastCheckedMs(feed);
+  return feed.boosted ? base - BOOST_PRIORITY_MS : base;
+}
+
+function sortFeedsByRefreshPriority(feeds) {
+  return [...feeds].sort((a, b) => getEffectiveLastCheckedMs(a) - getEffectiveLastCheckedMs(b));
+}
+
+function getRandomInterval(forBoosted = false) {
+  const minMinutes = forBoosted ? 8 : 25;
+  const maxMinutes = forBoosted ? 20 : 65;
   const minutes = minMinutes + Math.random() * (maxMinutes - minMinutes);
   return Math.round(minutes * 60 * 1000);
 }
-
-const MAX_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours hard cap
 
 function scheduleNextRefresh() {
   if (refreshTimeout) clearTimeout(refreshTimeout);
 
   let interval = getRandomInterval();
 
-  // Check the oldest feed's staleness and cap interval so it never exceeds 6 h
   try {
     const feeds = store.get('feeds');
     if (feeds.length > 0) {
-      const sorted = [...feeds].sort((a, b) => {
-        const ta = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
-        const tb = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
-        return ta - tb;
-      });
-      const oldestTime = sorted[0].lastChecked
-        ? new Date(sorted[0].lastChecked).getTime()
-        : 0;
+      const nextFeed = sortFeedsByRefreshPriority(feeds)[0];
+      interval = getRandomInterval(!!nextFeed.boosted);
+
+      const oldestTime = getFeedLastCheckedMs(nextFeed);
       const age = Date.now() - oldestTime;
-      const timeUntilStale = MAX_STALE_MS - age;
+      const timeUntilStale = getMaxStaleMs(nextFeed) - age;
 
       if (timeUntilStale <= 0) {
-        // Already over 6 h — refresh immediately (tiny delay to avoid tight loop)
-        interval = 5 * 1000; // 5 seconds
+        interval = 5 * 1000;
       } else if (timeUntilStale < interval) {
-        // Shorten wait so we refresh before the 6-h mark (with 2-min buffer)
         interval = Math.max(timeUntilStale - 2 * 60 * 1000, 5 * 1000);
       }
     }
@@ -335,14 +345,7 @@ async function refreshOldestFeed() {
       return;
     }
 
-    // Sort by lastChecked ascending — oldest first (never-checked = priority)
-    const sorted = [...feeds].sort((a, b) => {
-      const ta = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
-      const tb = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
-      return ta - tb;
-    });
-
-    const feed = sorted[0];
+    const feed = sortFeedsByRefreshPriority(feeds)[0];
     const platform = feed.platform || 'instagram';
     console.log(`[Smart-refresh] Refreshing @${feed.username} (${platform}), last checked: ${feed.lastChecked || 'never'}`);
 
@@ -380,11 +383,7 @@ async function refreshOldestFeed() {
     }
     console.log(`[Smart-refresh] @${feed.username} done (${profileData.posts.length} posts)`);
   } catch (err) {
-    const feed = store.get('feeds').sort((a, b) => {
-      const ta = a.lastChecked ? new Date(a.lastChecked).getTime() : 0;
-      const tb = b.lastChecked ? new Date(b.lastChecked).getTime() : 0;
-      return ta - tb;
-    })[0];
+    const feed = sortFeedsByRefreshPriority(store.get('feeds'))[0];
     const msg = `Failed to refresh @${feed?.username || 'unknown'}: ${err.message}`;
     console.error('[Smart-refresh]', msg);
     addNotification('error', msg);
@@ -1314,6 +1313,17 @@ ipcMain.handle('start-custom-feed', async (_e, url) => {
   const parsed = parseProfileInput(url);
   if (!parsed) throw new Error('Invalid URL');
   return await handleAddCustomFeed(parsed);
+});
+
+ipcMain.handle('toggle-feed-boost', (_e, username, platform) => {
+  const plat = platform || 'instagram';
+  const feeds = store.get('feeds');
+  const idx = feeds.findIndex((f) => f.username === username && (f.platform || 'instagram') === plat);
+  if (idx === -1) throw new Error('Feed not found');
+  feeds[idx].boosted = !feeds[idx].boosted;
+  store.set('feeds', feeds);
+  scheduleNextRefresh();
+  return feeds[idx];
 });
 
 ipcMain.handle('rename-feed', (_e, username, platform, newAlias) => {

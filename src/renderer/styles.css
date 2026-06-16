@@ -988,6 +988,12 @@ body {
   border-radius: 7px;
 }
 
+.feed-actions .btn-boost:not(.is-active):hover {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .feed-actions .btn-remove:hover {
   background: rgba(248, 113, 113, 0.15);
   border-color: var(--error);
