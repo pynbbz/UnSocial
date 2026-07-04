@@ -33,7 +33,10 @@ function loadAndExtract(win, profileUrl, username) {
       reject(new Error(`Timed out loading @${username}'s Twitter profile`));
     }, 35000);
 
+    let handled = false;
     win.webContents.on('did-finish-load', async () => {
+      if (handled) return;
+      handled = true;
       // Twitter/X is very JS-heavy; give extra time for tweets to render
       await sleep(5000);
 

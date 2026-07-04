@@ -41,7 +41,10 @@ function loadAndExtract(win, profileUrl, username) {
       reject(new Error(`Timed out loading @${username}'s profile`));
     }, 30000);
 
+    let handled = false;
     win.webContents.on('did-finish-load', async () => {
+      if (handled) return;
+      handled = true;
       // Give the SPA time to render posts (Instagram loads them async)
       await sleep(4000);
 
@@ -343,8 +346,10 @@ async function enrichPostDetails(win, posts) {
           return new Promise(function(resolve) {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', 'https://www.instagram.com/p/${post.shortcode}/?__a=1&__d=dis', true);
+            xhr.timeout = 10000;
             xhr.setRequestHeader('X-IG-App-ID', '936619743392459');
             xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+            xhr.ontimeout = function() { resolve(null); };
             xhr.onload = function() {
               try {
                 var data = JSON.parse(xhr.responseText);

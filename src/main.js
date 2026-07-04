@@ -280,6 +280,18 @@ function startStaleFeedMonitor() {
 let refreshTimeout = null;
 let isRefreshing = false;
 
+const SCRAPE_TIMEOUT_MS = 180_000; // 3-minute hard cap per scrape
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 function getFeedLastCheckedMs(feed) {
   return feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
 }
@@ -294,8 +306,19 @@ function sortFeedsByRefreshPriority(feeds) {
 }
 
 function getRandomInterval(forBoosted = false) {
-  const minMinutes = forBoosted ? 8 : 25;
-  const maxMinutes = forBoosted ? 20 : 65;
+  const feeds = store.get('feeds');
+  const feedCount = Math.max(feeds.length, 1);
+
+  // If any feed is boosted, the whole queue must cycle within the tighter
+  // boosted threshold (2 h) since we refresh one feed at a time.
+  const hasBoosted = feeds.some(f => f.boosted);
+  const tightestStaleMs = hasBoosted ? BOOST_MAX_STALE_MS : MAX_STALE_MS;
+  const maxSafeMinutes = (tightestStaleMs / 60000) / feedCount * 0.7;
+
+  const baseMax = forBoosted ? 20 : 65;
+  const maxMinutes = Math.min(baseMax, Math.max(maxSafeMinutes, 1));
+  const minMinutes = Math.max(1, maxMinutes * 0.4);
+
   const minutes = minMinutes + Math.random() * (maxMinutes - minMinutes);
   return Math.round(minutes * 60 * 1000);
 }
@@ -350,12 +373,13 @@ async function refreshOldestFeed() {
     console.log(`[Smart-refresh] Refreshing @${feed.username} (${platform}), last checked: ${feed.lastChecked || 'never'}`);
 
     let profileData;
-    if (platform === 'twitter') profileData = await scrapeTwitterProfile(feed.username);
-    else if (platform === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
-    else if (platform === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
-    else if (platform === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
-    else if (platform === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
-    else profileData = await scrapeInstagramProfile(feed.username);
+    const scrapeLabel = `Auto-refresh @${feed.username}`;
+    if (platform === 'twitter') profileData = await withTimeout(scrapeTwitterProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'facebook') profileData = await withTimeout(scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'linkedin') profileData = await withTimeout(scrapeLinkedInProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'txt') profileData = await withTimeout(scrapeTxtFile(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
     const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
     await generateFeed(feedKey, profileData, store, platform);
@@ -388,16 +412,17 @@ async function refreshOldestFeed() {
     console.error('[Smart-refresh]', msg);
     addNotification('error', msg);
 
-    // Bump lastChecked by 30 min so a failing feed doesn't block others from refreshing
+    // Move the failing feed to the back of the queue so other feeds get
+    // their turn.  Setting lastChecked to "now" means this feed won't be
+    // retried until every other feed has been refreshed first.
     if (feed) {
       try {
         const currentFeeds = store.get('feeds');
         const idx = currentFeeds.findIndex(f => f.username === feed.username && (f.platform || 'instagram') === (feed.platform || 'instagram'));
         if (idx !== -1) {
-          const prev = currentFeeds[idx].lastChecked ? new Date(currentFeeds[idx].lastChecked).getTime() : 0;
-          currentFeeds[idx].lastChecked = new Date(prev + 30 * 60 * 1000).toISOString();
+          currentFeeds[idx].lastChecked = new Date().toISOString();
           store.set('feeds', currentFeeds);
-          console.log(`[Smart-refresh] Bumped @${feed.username} lastChecked by 30 min to avoid blocking other feeds`);
+          console.log(`[Smart-refresh] Moved @${feed.username} to back of queue after failure`);
         }
       } catch (e) {
         console.error('[Smart-refresh] Failed to bump lastChecked:', e.message);
