@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('api', {
   getResolvedFeedBaseUrl: () => ipcRenderer.invoke('get-resolved-feed-base-url'),
 
   // Utils
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   // Events from main process

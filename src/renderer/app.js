@@ -12,6 +12,7 @@ const inputUrl = $('#input-url');
 const btnAdd = $('#btn-add');
 const addError = $('#add-error');
 const feedsList = $('#feeds-list');
+const feedTabsBar = $('#feed-tabs-bar');
 const emptyState = $('#empty-state');
 const feedCount = $('#feed-count');
 const btnRefreshAll = $('#btn-refresh-all');
@@ -78,6 +79,11 @@ let activeGroup = null;
 (async function init() {
   serverPort = await window.api.getServerPort();
   resolvedFeedBase = await window.api.getResolvedFeedBaseUrl();
+
+  // Display app version
+  const version = await window.api.getAppVersion();
+  const versionEl = $('#app-version');
+  if (versionEl && version) versionEl.textContent = `v${version}`;
 
   // Load notifications
   notifications = await window.api.getNotifications();
@@ -860,6 +866,7 @@ async function renderFeeds() {
   feedCount.textContent = `${feeds.length} feed${feeds.length !== 1 ? 's' : ''}`;
 
   if (feeds.length === 0) {
+    feedTabsBar.innerHTML = '';
     feedsList.innerHTML = '';
     feedsList.appendChild(createEmptyState());
     return;
@@ -887,12 +894,27 @@ async function renderFeeds() {
     if (!orderedCategories.includes(cat)) orderedCategories.push(cat);
   }
 
-  if (!activeGroup || !orderedCategories.includes(activeGroup)) {
-    activeGroup = orderedCategories[0];
+  if (!activeGroup || (activeGroup !== 'All' && !orderedCategories.includes(activeGroup))) {
+    activeGroup = 'All';
   }
 
+  // Render tabs into the sticky bar
   const tabs = document.createElement('div');
   tabs.className = 'feed-tabs';
+
+  // "All" tab first
+  const allTab = document.createElement('button');
+  allTab.type = 'button';
+  allTab.className = 'feed-tab' + (activeGroup === 'All' ? ' is-active' : '');
+  allTab.innerHTML = `
+    <span class="feed-tab-label">All</span>
+    <span class="feed-group-count">${feeds.length}</span>
+  `;
+  allTab.addEventListener('click', () => {
+    activeGroup = 'All';
+    renderFeeds();
+  });
+  tabs.appendChild(allTab);
 
   for (const category of orderedCategories) {
     const tab = document.createElement('button');
@@ -909,12 +931,14 @@ async function renderFeeds() {
     tabs.appendChild(tab);
   }
 
-  feedsList.appendChild(tabs);
+  feedTabsBar.innerHTML = '';
+  feedTabsBar.appendChild(tabs);
 
   const activeFeedsGrid = document.createElement('div');
   activeFeedsGrid.className = 'group-feeds-grid';
 
-  for (const feed of groups[activeGroup] || []) {
+  const feedsToShow = activeGroup === 'All' ? feeds : (groups[activeGroup] || []);
+  for (const feed of feedsToShow) {
     const card = buildFeedCard(feed);
     activeFeedsGrid.appendChild(card);
   }

@@ -1071,6 +1071,7 @@ async function checkLinkedInLoginStatus() {
 // ── IPC Handlers ───────────────────────────────────────────────────────────
 
 // Instagram auth
+ipcMain.handle('get-app-version', () => app.getVersion());
 ipcMain.handle('open-login', () => openLoginWindow());
 ipcMain.handle('check-login', () => checkLoginStatus());
 ipcMain.handle('logout', async () => {
