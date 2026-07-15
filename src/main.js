@@ -47,7 +47,21 @@ if (portableDir) {
   }
 
   app.setPath('userData', newUserData);
+} else if (process.platform === 'darwin') {
+  // macOS portable mode: when the .app bundle lives outside /Applications,
+  // store userData next to the .app — same as the Windows portable behaviour.
+  // This lets users share the same UnSocial-userdata folder across platforms.
+  const appBundlePath = app.getAppPath().replace(/\/Contents\/Resources\/app(\.asar)?$/, '');
+  const appDir = path.dirname(appBundlePath);
+  if (!appDir.startsWith('/Applications')) {
+    const newUserData = path.join(appDir, 'UnSocial-userdata');
+    if (!fs.existsSync(newUserData)) {
+      fs.mkdirSync(newUserData, { recursive: true });
+    }
+    app.setPath('userData', newUserData);
+  }
 }
+
 
 function copyDirSync(src, dest) {
   fs.mkdirSync(dest, { recursive: true });

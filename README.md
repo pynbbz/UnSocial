@@ -1,6 +1,6 @@
 # UnSocial
 
-**Social media → RSS feed converter** — a Windows desktop app that turns Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
+**Social media → RSS feed converter** — a desktop app for Windows, macOS (Apple Silicon), and Linux that turns Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
 
 ![Showcase](Showcase.png)
 
@@ -17,14 +17,15 @@
 - **Notification system** — Alerts for stale feeds, failed refreshes, and connectivity issues
 - **System tray** — Minimizes to tray and runs in the background
 - **Feed authentication** — Optional token-based auth to protect feeds when exposed publicly
-- **Portable** — Single-exe portable build; data is stored next to the executable
+- **Portable** — Single-exe portable build (Windows), .dmg (macOS), or .AppImage (Linux); data is stored next to the app
+- **Cross-platform data** — Share the same `UnSocial-userdata` folder between Windows, macOS, and Linux
 
 ## Getting Started
 
 ### Prerequisites
 
 - **Node.js** 18+ and **npm**
-- **Windows** (the app is built for Windows; other platforms may work but are untested)
+- **Windows**, **macOS** (Apple Silicon), or **Linux**
 
 ### Install & Run
 
@@ -40,13 +41,51 @@ npm install
 npm start
 ```
 
-### Build a Portable Executable
+### Building the App
+
+All builds output to the `dist/` folder. Each platform must be built **on that platform** (no cross-compiling).
+
+#### Windows — Portable `.exe`
 
 ```bash
 npm run build
 ```
 
-The output will be in the `dist/` folder as a single portable `.exe`.
+Produces a single portable `UnSocial.exe`. No installer needed — just run it.
+
+#### macOS (Apple Silicon) — `.dmg`
+
+```bash
+npm run build:mac
+```
+
+Produces a `.dmg` for Apple Silicon (arm64). Mount, drag to wherever you want, done.
+
+> **Note:** The DMG is unsigned. On first launch, right-click the app → **Open** to bypass Gatekeeper.
+
+#### Linux — `.AppImage`
+
+```bash
+npm run build:linux
+```
+
+Produces an `.AppImage`. Make it executable (`chmod +x UnSocial-*.AppImage`) and run it.
+
+#### Build Script Reference
+
+Each platform has four variants — the default bumps the patch version, the others bump minor/major, or build without any version change:
+
+| | Patch (default) | Minor | Major | No version bump |
+|---|---|---|---|---|
+| **Windows** | `npm run build` | `npm run build:minor` | `npm run build:major` | `npm run build:current` |
+| **macOS** | `npm run build:mac` | `npm run build:mac:minor` | `npm run build:mac:major` | `npm run build:mac:current` |
+| **Linux** | `npm run build:linux` | `npm run build:linux:minor` | `npm run build:linux:major` | `npm run build:linux:current` |
+
+### Portable Data (Cross-Platform)
+
+UnSocial stores all feeds, settings, and session data in a `UnSocial-userdata` folder next to the executable (Windows), `.app` bundle (macOS, when not in `/Applications`), or AppImage (Linux).
+
+To migrate your data between platforms, simply copy the `UnSocial-userdata` folder next to the app on the other platform. Your feed list, RSS data, and settings will carry over. You will need to re-login to each social media platform, as login sessions are device/IP-bound by the platforms themselves.
 
 ## Usage
 
@@ -214,9 +253,9 @@ Contributions are welcome! Please open an issue first to discuss what you'd like
 4. Push to the branch (`git push origin feature/my-feature`)
 5. Open a Pull Request
 
-Patch: npm run build
-Minor: npm run build:minor
-Major: npm run build:major
+Windows (Patch/Minor/Major): `npm run build` / `npm run build:minor` / `npm run build:major`
+macOS (Patch/Minor/Major): `npm run build:mac` / `npm run build:mac:minor` / `npm run build:mac:major`
+Linux (Patch/Minor/Major): `npm run build:linux` / `npm run build:linux:minor` / `npm run build:linux:major`
 
 ## License
 

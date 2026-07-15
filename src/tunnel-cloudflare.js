@@ -33,23 +33,39 @@ let _resolvedCloudflaredPath = null;
 function getCloudflaredPath() {
   if (_resolvedCloudflaredPath) return _resolvedCloudflaredPath;
 
-  const candidates = [
-    path.join('C:', 'Program Files (x86)', 'cloudflared', 'cloudflared.exe'),
-    path.join('C:', 'Program Files', 'cloudflared', 'cloudflared.exe'),
-    path.join(process.env.USERPROFILE || '', 'cloudflared', 'cloudflared.exe'),
-    path.join(process.env.USERPROFILE || '', '.cloudflared', 'cloudflared.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'cloudflared', 'cloudflared.exe'),
-    path.join(process.env.USERPROFILE || '', 'scoop', 'shims', 'cloudflared.exe'),
-    path.join('C:', 'ProgramData', 'chocolatey', 'bin', 'cloudflared.exe'),
-  ];
-
-  for (const p of candidates) {
-    try {
-      if (p && fs.existsSync(p)) {
-        _resolvedCloudflaredPath = p;
-        return _resolvedCloudflaredPath;
-      }
-    } catch (_) {}
+  if (process.platform === 'win32') {
+    const candidates = [
+      path.join('C:', 'Program Files (x86)', 'cloudflared', 'cloudflared.exe'),
+      path.join('C:', 'Program Files', 'cloudflared', 'cloudflared.exe'),
+      path.join(process.env.USERPROFILE || '', 'cloudflared', 'cloudflared.exe'),
+      path.join(process.env.USERPROFILE || '', '.cloudflared', 'cloudflared.exe'),
+      path.join(process.env.LOCALAPPDATA || '', 'cloudflared', 'cloudflared.exe'),
+      path.join(process.env.USERPROFILE || '', 'scoop', 'shims', 'cloudflared.exe'),
+      path.join('C:', 'ProgramData', 'chocolatey', 'bin', 'cloudflared.exe'),
+    ];
+    for (const p of candidates) {
+      try {
+        if (p && fs.existsSync(p)) {
+          _resolvedCloudflaredPath = p;
+          return _resolvedCloudflaredPath;
+        }
+      } catch (_) {}
+    }
+  } else {
+    // macOS / Linux — check common install locations
+    const unixCandidates = [
+      '/usr/local/bin/cloudflared',
+      '/opt/homebrew/bin/cloudflared',
+      '/usr/bin/cloudflared',
+    ];
+    for (const p of unixCandidates) {
+      try {
+        if (fs.existsSync(p)) {
+          _resolvedCloudflaredPath = p;
+          return _resolvedCloudflaredPath;
+        }
+      } catch (_) {}
+    }
   }
 
   _resolvedCloudflaredPath = 'cloudflared';
@@ -316,9 +332,12 @@ function stopTunnel() {
  * Kill any orphaned cloudflared.exe processes.
  */
 function killOrphaned() {
-  if (process.platform !== 'win32') return;
   try {
-    execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      execSync('taskkill /F /IM cloudflared.exe', { stdio: 'ignore' });
+    } else {
+      execSync('pkill -f cloudflared', { stdio: 'ignore' });
+    }
   } catch (_) {}
 }
 

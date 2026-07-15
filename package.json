@@ -1,7 +1,7 @@
 {
   "name": "unsocial",
   "version": "1.13.0",
-  "description": "Social media to RSS Feed converter - Windows Desktop App",
+  "description": "Social media to RSS Feed converter - Desktop App",
   "main": "src/main.js",
   "license": "MIT",
   "repository": {
@@ -25,7 +25,15 @@
     "build": "npm version patch --no-git-tag-version && electron-builder --win",
     "build:minor": "npm version minor --no-git-tag-version && electron-builder --win",
     "build:major": "npm version major --no-git-tag-version && electron-builder --win",
-    "build:current": "electron-builder --win"
+    "build:current": "electron-builder --win",
+    "build:mac": "npm version patch --no-git-tag-version && electron-builder --mac --arm64",
+    "build:mac:minor": "npm version minor --no-git-tag-version && electron-builder --mac --arm64",
+    "build:mac:major": "npm version major --no-git-tag-version && electron-builder --mac --arm64",
+    "build:mac:current": "electron-builder --mac --arm64",
+    "build:linux": "npm version patch --no-git-tag-version && electron-builder --linux",
+    "build:linux:minor": "npm version minor --no-git-tag-version && electron-builder --linux",
+    "build:linux:major": "npm version major --no-git-tag-version && electron-builder --linux",
+    "build:linux:current": "electron-builder --linux"
   },
   "build": {
     "appId": "com.unsocial.app",
@@ -38,6 +46,24 @@
       "artifactName": "UnSocial.exe",
       "requestExecutionLevel": "user",
       "unpackDirName": "UnSocial-data"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64"] }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.utilities",
+      "artifactName": "UnSocial-${version}-arm64.${ext}"
+    },
+    "dmg": {
+      "title": "UnSocial",
+      "artifactName": "UnSocial-${version}-arm64.dmg"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "assets/icon.png",
+      "category": "Network",
+      "artifactName": "UnSocial-${version}-${arch}.${ext}"
     },
     "files": [
       "src/**/*",

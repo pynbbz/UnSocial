@@ -7,6 +7,7 @@ out/
 
 # Electron-store data
 UnSocial-data/
+UnSocial-userdata/
 
 # OS generated files
 desktop.ini
