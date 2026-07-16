@@ -288,7 +288,7 @@ function startTunnel(store) {
       }
       if (line.includes('ERR') && tunnelStatus === 'starting') {
         if (line.includes('failed to connect') || line.includes('authentication')) {
-          setStatus('error');
+          setStatus('error', line);
         }
       }
     });
@@ -302,7 +302,7 @@ function startTunnel(store) {
     tunnelProcess.on('error', (err) => {
       appendLog(`[tunnel error: ${err.message}]`);
       tunnelProcess = null;
-      setStatus('error');
+      setStatus('error', err.message);
     });
   }, 2000);
 
@@ -361,9 +361,9 @@ function getTunnelState(store) {
   };
 }
 
-function setStatus(s) {
+function setStatus(s, message = '') {
   tunnelStatus = s;
-  if (statusCallback) statusCallback({ status: s });
+  if (statusCallback) statusCallback({ status: s, message });
 }
 
 function appendLog(line) {

@@ -474,6 +474,14 @@ app.whenReady().then(async () => {
       }
       if (data.status === 'error') {
         addNotification('error', 'Tunnel disconnected: ' + (data.message || 'unknown error'));
+        if (data.message) {
+          const match = data.message.match(/https:\/\/login\.tailscale\.com\/f\/[^\s]+/);
+          if (match) {
+            shell.openExternal(match[0]).catch((err) => {
+              console.error('[Tunnel] Failed to open external URL:', err.message);
+            });
+          }
+        }
       } else if (data.status === 'running') {
         resolveNotificationsBySubstring('Tunnel');
       }

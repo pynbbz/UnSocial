@@ -525,13 +525,17 @@ function formatNotifTime(iso) {
 btnTunnelToggle.addEventListener('click', async () => {
   const state = await window.api.tunnelState();
   if (state.status === 'running' || state.status === 'starting') {
-    await window.api.tunnelStop();
     updateTunnelUI('stopped');
     toast('Tunnel stopped', 'success');
+    await window.api.tunnelStop();
   } else {
-    await window.api.tunnelStart();
     updateTunnelUI('starting');
     toast('Starting tunnel…', 'success');
+    const result = await window.api.tunnelStart();
+    if (result && result.status === 'error') {
+      updateTunnelUI('error');
+      toast('Tunnel failed: ' + (result.error || 'Unknown error'), 'error');
+    }
   }
 });
 

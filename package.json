@@ -1,6 +1,6 @@
 {
   "name": "unsocial",
-  "version": "1.13.0",
+  "version": "1.13.4",
   "description": "Social media to RSS Feed converter - Desktop App",
   "main": "src/main.js",
   "license": "MIT",
@@ -49,7 +49,12 @@
     },
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "icon": "assets/icon.png",
       "category": "public.app-category.utilities",
@@ -60,7 +65,9 @@
       "artifactName": "UnSocial-${version}-arm64.dmg"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "assets/icon.png",
       "category": "Network",
       "artifactName": "UnSocial-${version}-${arch}.${ext}"
@@ -80,7 +87,12 @@
     "feed": "^4.2.2"
   },
   "devDependencies": {
+    "dmg-license": "^1.0.11",
     "electron": "^40.3.0",
     "electron-builder": "^26.7.0"
+  },
+  "allowScripts": {
+    "electron@40.3.0": true,
+    "electron-winstaller@5.4.0": true
   }
 }

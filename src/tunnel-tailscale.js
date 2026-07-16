@@ -90,8 +90,20 @@ function runCommand(args, { timeoutMs = 20000 } = {}) {
     };
     try {
       proc = spawn(getTailscalePath(), args);
-      proc.stdout.on('data', (d) => (output += d.toString()));
-      proc.stderr.on('data', (d) => (output += d.toString()));
+      const onData = (d) => {
+        output += d.toString();
+        // Check for common error signatures that indicate Tailscale is prompting/blocking
+        if (
+          output.includes('Funnel is not enabled') ||
+          output.includes('To enable, visit:') ||
+          output.includes('HTTPS must be enabled') ||
+          output.includes('not allowed by the tailnet policy')
+        ) {
+          finish({ success: false, output: output.trim(), code: -1 });
+        }
+      };
+      proc.stdout.on('data', onData);
+      proc.stderr.on('data', onData);
       proc.on('close', (code) => finish({ success: code === 0, output: output.trim(), code }));
       proc.on('error', (err) => finish({ success: false, output: err.message, code: -1 }));
       setTimeout(() => finish({ success: false, output: output.trim() || 'timeout', code: -1 }), timeoutMs);
@@ -229,7 +241,7 @@ async function startTunnel(store) {
   appendLog(r.output || (r.success ? 'Funnel started' : 'Funnel failed'));
 
   if (!r.success) {
-    setStatus('error');
+    setStatus('error', r.output);
     return { status: tunnelStatus, error: r.output };
   }
 
@@ -282,7 +294,7 @@ function startPolling(store) {
       }
     } else if (attempts > 30) {
       // 30 * 1s = 30s with no success → treat as error
-      setStatus('error');
+      setStatus('error', 'Tunnel connection timeout');
       stopPolling();
     }
   }, 1000);
@@ -316,9 +328,9 @@ async function getTunnelState(store) {
   };
 }
 
-function setStatus(s) {
+function setStatus(s, message = '') {
   tunnelStatus = s;
-  if (statusCallback) statusCallback({ status: s });
+  if (statusCallback) statusCallback({ status: s, message });
 }
 
 function appendLog(line) {
