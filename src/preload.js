@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Custom website
   startCustomFeed: (url) => ipcRenderer.invoke('start-custom-feed', url),
+  openCustomLogin: (url) => ipcRenderer.invoke('open-custom-login', url),
 
   // Feeds
   getFeeds: () => ipcRenderer.invoke('get-feeds'),

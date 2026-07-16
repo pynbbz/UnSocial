@@ -321,14 +321,26 @@ function updateTunnelUrls() {
 }
 
 function updatePlatformLoginUI(platform, loggedIn) {
+  let badgeEl, reconnectEl;
   if (platform === 'twitter') {
-    twStatusEl.className = 'status-badge platform-clickable ' + (loggedIn ? 'online' : 'offline');
+    badgeEl = twStatusEl;
+    reconnectEl = $('#tw-reconnect');
   } else if (platform === 'facebook') {
-    fbStatusEl.className = 'status-badge platform-clickable ' + (loggedIn ? 'online' : 'offline');
+    badgeEl = fbStatusEl;
+    reconnectEl = $('#fb-reconnect');
   } else if (platform === 'linkedin') {
-    liStatusEl.className = 'status-badge platform-clickable ' + (loggedIn ? 'online' : 'offline');
+    badgeEl = liStatusEl;
+    reconnectEl = $('#li-reconnect');
   } else {
-    igStatusEl.className = 'status-badge platform-clickable ' + (loggedIn ? 'online' : 'offline');
+    badgeEl = igStatusEl;
+    reconnectEl = $('#ig-reconnect');
+  }
+
+  if (badgeEl) {
+    badgeEl.className = 'status-badge platform-clickable ' + (loggedIn ? 'online' : 'offline');
+  }
+  if (reconnectEl) {
+    reconnectEl.style.display = loggedIn ? 'inline-flex' : 'none';
   }
 }
 
@@ -365,6 +377,24 @@ liStatusEl.addEventListener('click', () => {
   } else {
     window.api.openLinkedInLogin();
   }
+});
+
+// Click reconnect buttons directly: open login window without logging out
+$('#ig-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openLogin();
+});
+$('#tw-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openTwitterLogin();
+});
+$('#fb-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openFacebookLogin();
+});
+$('#li-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openLinkedInLogin();
 });
 
 // Right-click platform badge: force reset (clears all cookies & storage)
@@ -956,6 +986,7 @@ function buildFeedCard(feed) {
     card.dataset.username = feed.username;
     const platform = feed.platform || 'instagram';
     card.dataset.platform = platform;
+    const showLoginBtn = platform === 'custom';
 
     // Detect stale (>6h), errored feeds, or logged-out platform
     const lastCheckedMs = feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
@@ -1060,6 +1091,17 @@ function buildFeedCard(feed) {
             </svg>
           </span>
         </button>
+        ${showLoginBtn ? `
+        <button class="btn btn-outline btn-icon-action feed-action-btn btn-relogin" title="Log in to Website" aria-label="Log in to Website">
+          <span class="btn-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+          </span>
+        </button>
+        ` : ''}
         <button class="btn btn-outline btn-icon-action feed-action-btn btn-remove" title="Remove" aria-label="Remove feed">
           <span class="btn-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1146,6 +1188,16 @@ function buildFeedCard(feed) {
       window.focus();
     });
 
+    if (platform === 'custom') {
+      card.querySelector('.btn-relogin').addEventListener('click', async () => {
+        const url = feed.fullUrl || feed.url;
+        toast('Opening login window…', 'info');
+        await window.api.openCustomLogin(url);
+        toast('Login window closed', 'info');
+        await renderFeeds();
+      });
+    }
+
     return card;
 }
 
@@ -1216,7 +1268,8 @@ async function exportOpml() {
 
     const result = await window.api.exportOpml(groups, tunnelDomain);
     if (result.success) {
-      toast(`Exported ${result.fileCount} OPML file(s)`, 'success');
+      const folderName = result.exportDir ? result.exportDir.split(/[/\\]/).pop() : 'folder';
+      toast(`Exported ${result.fileCount} OPML file(s) to ${folderName}`, 'success');
       pulseSuccess(btnCopyOpml);
     } else {
       toast(result.error || 'Export failed', 'error');

@@ -500,6 +500,26 @@ body {
   gap: 6px;
 }
 
+.btn-reconnect {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+
+.btn-reconnect:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--text);
+}
+
 .platform-icon {
   font-size: 14px;
   margin-right: 2px;

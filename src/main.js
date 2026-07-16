@@ -786,7 +786,7 @@ function openLoginWindow() {
     width: 460,
     height: 720,
     parent: mainWindow,
-    modal: true,
+    modal: false,
     title: 'Login to Instagram',
     webPreferences: {
       partition: undefined,
@@ -826,7 +826,7 @@ function openTwitterLoginWindow() {
     width: 500,
     height: 720,
     parent: mainWindow,
-    modal: true,
+    modal: false,
     title: 'Login to Twitter / X',
     webPreferences: {
       partition: undefined,
@@ -882,7 +882,7 @@ function openFacebookLoginWindow() {
     width: 500,
     height: 720,
     parent: mainWindow,
-    modal: true,
+    modal: false,
     title: 'Login to Facebook',
     webPreferences: {
       partition: undefined,
@@ -924,7 +924,7 @@ function openLinkedInLoginWindow() {
     width: 500,
     height: 720,
     parent: mainWindow,
-    modal: true,
+    modal: false,
     title: 'Login to LinkedIn',
     webPreferences: {
       partition: undefined,
@@ -1520,10 +1520,47 @@ ipcMain.handle('open-external', (_e, url) => {
   shell.openExternal(url);
 });
 
+ipcMain.handle('open-custom-login', (_e, url) => {
+  return new Promise((resolve) => {
+    let loginWin = new BrowserWindow({
+      width: 1024,
+      height: 768,
+      parent: mainWindow || undefined,
+      modal: false,
+      title: 'Login to Custom Website',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    loginWin.setMenuBarVisibility(false);
+    loginWin.loadURL(url).catch((err) => {
+      console.error('[Custom Login] Failed to load URL:', err.message);
+    });
+
+    loginWin.on('closed', () => {
+      resolve({ success: true });
+    });
+  });
+});
+
 ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
   try {
-    // Determine export directory: beside the exe for portable, or app path
-    const exportDir = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+    // Determine export directory: beside the exe for portable, or Downloads folder
+    let exportDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (!exportDir) {
+      try {
+        exportDir = app.getPath('downloads');
+      } catch (_) {
+        try {
+          exportDir = app.getPath('documents');
+        } catch (_) {
+          exportDir = app.getPath('home');
+        }
+      }
+    }
+
     const feedTokenExport = store.get('feedToken');
     const tokenSuffix = feedTokenExport ? `?token=${feedTokenExport}` : '';
     let fileCount = 0;
@@ -1559,7 +1596,13 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
       fileCount++;
     }
 
-    return { success: true, fileCount };
+    if (exportDir) {
+      shell.openPath(exportDir).catch((err) => {
+        console.error('[Export OPML] Failed to open folder:', err.message);
+      });
+    }
+
+    return { success: true, fileCount, exportDir };
   } catch (err) {
     console.error('[Export OPML] Error:', err.message);
     return { success: false, error: err.message };
