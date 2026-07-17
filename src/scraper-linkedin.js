@@ -8,7 +8,7 @@ const { BrowserWindow } = require('electron');
  */
 async function scrapeLinkedInProfile(username) {
   // Support both company pages and personal profiles
-  const isCompany = username.startsWith('company/');
+  const isCompany = username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/');
   const profileUrl = `https://www.linkedin.com/${isCompany ? username : `in/${username}`}/recent-activity/all/`;
 
   const hidden = new BrowserWindow({

@@ -1215,11 +1215,12 @@ ipcMain.handle('add-feed', async (_e, url) => {
   // Re-focus main window after hidden scraper window was destroyed
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
 
+  const isOrg = username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/');
   const profileUrls = {
     twitter: `https://x.com/${username}`,
     facebook: `https://www.facebook.com/${username}`,
     instagram: `https://www.instagram.com/${username}/`,
-    linkedin: `https://www.linkedin.com/in/${username}`,
+    linkedin: isOrg ? `https://www.linkedin.com/${username}` : `https://www.linkedin.com/in/${username}`,
     txt: parsed.fullUrl || url,
   };
 
@@ -1580,10 +1581,11 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
       for (const feed of feeds) {
         const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
         const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
-        const htmlUrl = feed.platform === 'txt'
+        const isOrg = feed.username.startsWith('company/') || feed.username.startsWith('showcase/') || feed.username.startsWith('school/');
+        const htmlUrl = (feed.platform === 'txt' || feed.platform === 'custom')
           ? (feed.fullUrl || feed.url || '')
-          : feed.platform === 'custom'
-            ? (feed.fullUrl || feed.url || '')
+          : feed.platform === 'linkedin'
+            ? (isOrg ? `https://www.linkedin.com/${feed.username}/` : `https://www.linkedin.com/in/${feed.username}/`)
             : `${platformUrlBase[category] || ''}${feed.username}/`;
         const title = escapeXml(feed.alias || feed.username);
         outlines += `      <outline text="${title}" title="${title}" type="rss" xmlUrl="${escapeXml(xmlUrl)}" htmlUrl="${escapeXml(htmlUrl)}"/>\n`;
@@ -1788,11 +1790,11 @@ function parseProfileInput(input) {
   );
   if (liProfileMatch) return { username: liProfileMatch[1], platform: 'linkedin' };
 
-  // LinkedIn company URL: https://www.linkedin.com/company/companyname/
-  const liCompanyMatch = input.match(
-    /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/(company\/[a-zA-Z0-9._-]+)/
+  // LinkedIn company/showcase/school URL: https://www.linkedin.com/company/companyname/ or showcase/school
+  const liOrgMatch = input.match(
+    /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/((?:company|showcase|school)\/[a-zA-Z0-9._-]+)/
   );
-  if (liCompanyMatch) return { username: liCompanyMatch[1], platform: 'linkedin' };
+  if (liOrgMatch) return { username: liOrgMatch[1], platform: 'linkedin' };
 
   // Instagram URL: https://www.instagram.com/username/
   const igMatch = input.match(

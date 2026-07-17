@@ -35,9 +35,13 @@ async function generateFeed(username, profileData, store, platform) {
              username.startsWith('events/') ? 'Facebook Event' : 'Facebook',
     },
     linkedin: {
-      siteUrl: `https://www.linkedin.com/in/${username}`,
+      siteUrl: (username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/'))
+        ? `https://www.linkedin.com/${username}`
+        : `https://www.linkedin.com/in/${username}`,
       favicon: 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png',
-      label: username.startsWith('company/') ? 'LinkedIn Company' : 'LinkedIn',
+      label: username.startsWith('company/') ? 'LinkedIn Company' :
+             username.startsWith('showcase/') ? 'LinkedIn Showcase' :
+             username.startsWith('school/') ? 'LinkedIn School' : 'LinkedIn',
     },
     txt: {
       siteUrl: profileData.biography || '',
