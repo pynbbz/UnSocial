@@ -791,14 +791,82 @@ body {
 /* ── Feed Tabs Bar (sticky below search) ─────────────────────────────── */
 
 .feed-tabs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 0 24px 10px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   z-index: 9;
+  flex-wrap: wrap;
 }
 
-.feed-tabs-bar:empty {
-  display: none;
+.feed-search-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+  min-width: 180px;
+  max-width: 280px;
+  flex: 0 1 240px;
+}
+
+.feed-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color 0.15s;
+}
+
+.feed-search-wrap:focus-within .feed-search-icon {
+  color: var(--primary);
+}
+
+.feed-search-input {
+  width: 100%;
+  padding: 6px 28px 6px 30px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.feed-search-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  background: var(--bg-input);
+}
+
+.feed-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.btn-clear-search {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-clear-search:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 /* ── Feeds List ───────────────────────────────────────────────────────── */

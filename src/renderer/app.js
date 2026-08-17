@@ -13,12 +13,17 @@ const btnAdd = $('#btn-add');
 const addError = $('#add-error');
 const feedsList = $('#feeds-list');
 const feedTabsBar = $('#feed-tabs-bar');
+const feedTabs = $('#feed-tabs');
+const feedSearchWrap = $('#feed-search-wrap');
+const feedSearchInput = $('#feed-search-input');
+const btnClearSearch = $('#btn-clear-search');
 const emptyState = $('#empty-state');
 const feedCount = $('#feed-count');
 const btnRefreshAll = $('#btn-refresh-all');
 const btnCopyOpml = $('#btn-copy-opml');
 const btnBlurToggle = $('#btn-blur-toggle');
 let urlsBlurred = false;
+let feedSearchQuery = '';
 
 
 // Tunnel elements
@@ -222,10 +227,9 @@ function updateTunnelUI(status) {
 }
 
 function updatePublicAccessIcon() {
-  const hasErrors = notifications.some(n => !n.resolved && n.type === 'error');
   btnPublicAccess.classList.remove('status-green', 'status-yellow', 'status-red');
 
-  if (hasErrors) {
+  if (currentTunnelStatus === 'error') {
     btnPublicAccess.classList.add('status-red');
   } else if (currentTunnelStatus === 'running') {
     btnPublicAccess.classList.add('status-green');
@@ -434,6 +438,55 @@ btnBlurToggle.addEventListener('click', () => {
 logoLink.addEventListener('click', (e) => {
   e.preventDefault();
   window.api.openExternal('https://github.com/pynbbz/UnSocial');
+});
+
+// ── Search Input Handlers ──────────────────────────────────────────────────
+
+if (feedSearchInput) {
+  feedSearchInput.addEventListener('input', () => {
+    feedSearchQuery = feedSearchInput.value.trim().toLowerCase();
+    if (btnClearSearch) {
+      btnClearSearch.style.display = feedSearchInput.value ? 'flex' : 'none';
+    }
+    renderFeeds();
+  });
+
+  feedSearchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      feedSearchInput.value = '';
+      feedSearchQuery = '';
+      if (btnClearSearch) btnClearSearch.style.display = 'none';
+      feedSearchInput.blur();
+      renderFeeds();
+    }
+  });
+}
+
+if (btnClearSearch) {
+  btnClearSearch.addEventListener('click', () => {
+    if (feedSearchInput) {
+      feedSearchInput.value = '';
+      feedSearchQuery = '';
+      btnClearSearch.style.display = 'none';
+      feedSearchInput.focus();
+      renderFeeds();
+    }
+  });
+}
+
+// Global shortcut: press '/' or 'Cmd+F' / 'Ctrl+F' to focus feed searchbar
+document.addEventListener('keydown', (e) => {
+  if (
+    ((e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') ||
+     ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f')) &&
+    feedSearchInput &&
+    feedTabsBar &&
+    feedTabsBar.style.display !== 'none'
+  ) {
+    e.preventDefault();
+    feedSearchInput.focus();
+    feedSearchInput.select();
+  }
 });
 
 // ── Notification Bell ────────────────────────────────────────────────────────
@@ -900,18 +953,29 @@ async function renderFeeds() {
   feedCount.textContent = `${feeds.length} feed${feeds.length !== 1 ? 's' : ''}`;
 
   if (feeds.length === 0) {
-    feedTabsBar.innerHTML = '';
+    if (feedTabsBar) feedTabsBar.style.display = 'none';
     feedsList.innerHTML = '';
     feedsList.appendChild(createEmptyState());
     return;
   }
 
-  feedsList.innerHTML = '';
+  if (feedTabsBar) feedTabsBar.style.display = 'flex';
+
+  // Filter feeds by search query if present
+  const query = feedSearchQuery;
+  const filteredFeeds = query ? feeds.filter(feed => {
+    const u = (feed.username || '').toLowerCase();
+    const a = (feed.alias || '').toLowerCase();
+    const p = (feed.platform || '').toLowerCase();
+    const url = (feed.url || '').toLowerCase();
+    const fullUrl = (feed.fullUrl || '').toLowerCase();
+    return u.includes(query) || a.includes(query) || p.includes(query) || url.includes(query) || fullUrl.includes(query);
+  }) : feeds;
 
   // Group feeds by category
   const groups = {};
   const groupOrder = ['Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
-  for (const feed of feeds) {
+  for (const feed of filteredFeeds) {
     const platform = feed.platform || 'instagram';
     const category = platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
@@ -932,9 +996,9 @@ async function renderFeeds() {
     activeGroup = 'All';
   }
 
-  // Render tabs into the sticky bar
-  const tabs = document.createElement('div');
-  tabs.className = 'feed-tabs';
+  // Render category tabs into #feed-tabs (or fallback to feedTabsBar)
+  const tabsContainer = $('#feed-tabs') || feedTabsBar;
+  tabsContainer.innerHTML = '';
 
   // "All" tab first
   const allTab = document.createElement('button');
@@ -942,13 +1006,13 @@ async function renderFeeds() {
   allTab.className = 'feed-tab' + (activeGroup === 'All' ? ' is-active' : '');
   allTab.innerHTML = `
     <span class="feed-tab-label">All</span>
-    <span class="feed-group-count">${feeds.length}</span>
+    <span class="feed-group-count">${filteredFeeds.length}</span>
   `;
   allTab.addEventListener('click', () => {
     activeGroup = 'All';
     renderFeeds();
   });
-  tabs.appendChild(allTab);
+  tabsContainer.appendChild(allTab);
 
   for (const category of orderedCategories) {
     const tab = document.createElement('button');
@@ -962,16 +1026,38 @@ async function renderFeeds() {
       activeGroup = category;
       renderFeeds();
     });
-    tabs.appendChild(tab);
+    tabsContainer.appendChild(tab);
   }
 
-  feedTabsBar.innerHTML = '';
-  feedTabsBar.appendChild(tabs);
+  feedsList.innerHTML = '';
+
+  if (filteredFeeds.length === 0 && query) {
+    const searchEmpty = document.createElement('div');
+    searchEmpty.className = 'empty-state';
+    searchEmpty.innerHTML = `
+      <div class="empty-icon">🔍</div>
+      <p>No subscribed feeds match "<strong>${escapeHtml(feedSearchInput ? feedSearchInput.value : query)}</strong>"</p>
+      <p class="subtle" style="margin-top: 10px;">
+        <button type="button" class="btn btn-outline btn-sm" id="btn-clear-search-empty">Clear search</button>
+      </p>
+    `;
+    searchEmpty.querySelector('#btn-clear-search-empty')?.addEventListener('click', () => {
+      if (feedSearchInput) {
+        feedSearchInput.value = '';
+        feedSearchQuery = '';
+        if (btnClearSearch) btnClearSearch.style.display = 'none';
+        feedSearchInput.focus();
+      }
+      renderFeeds();
+    });
+    feedsList.appendChild(searchEmpty);
+    return;
+  }
 
   const activeFeedsGrid = document.createElement('div');
   activeFeedsGrid.className = 'group-feeds-grid';
 
-  const feedsToShow = activeGroup === 'All' ? feeds : (groups[activeGroup] || []);
+  const feedsToShow = activeGroup === 'All' ? filteredFeeds : (groups[activeGroup] || []);
   for (const feed of feedsToShow) {
     const card = buildFeedCard(feed);
     activeFeedsGrid.appendChild(card);

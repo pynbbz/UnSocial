@@ -242,10 +242,28 @@ function runWizardStep(step, store) {
   }
 }
 
+let desiredState = 'stopped';
+let startTimer = null;
+let reconnectTimer = null;
+
+function clearTimers() {
+  if (startTimer) {
+    clearTimeout(startTimer);
+    startTimer = null;
+  }
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
 /**
  * Start the Cloudflare Tunnel.
  */
 function startTunnel(store) {
+  desiredState = 'running';
+  clearTimers();
+
   if (tunnelProcess) {
     return { status: tunnelStatus };
   }
@@ -264,8 +282,9 @@ function startTunnel(store) {
     cleanup.on('error', () => {});
   } catch (_) {}
 
-  setTimeout(() => {
-    if (tunnelProcess) return;
+  startTimer = setTimeout(() => {
+    startTimer = null;
+    if (tunnelProcess || desiredState !== 'running') return;
 
     tunnelProcess = spawn(
       getCloudflaredPath(),
@@ -296,13 +315,33 @@ function startTunnel(store) {
     tunnelProcess.on('close', (code) => {
       appendLog(`[tunnel process exited with code ${code}]`);
       tunnelProcess = null;
-      setStatus('stopped');
+      if (desiredState === 'running') {
+        setStatus('error', `Process exited (code ${code})`);
+        appendLog('[cloudflare] Tunnel closed unexpectedly. Retrying in 5s...');
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (desiredState === 'running') {
+            startTunnel(store);
+          }
+        }, 5000);
+      } else {
+        setStatus('stopped');
+      }
     });
 
     tunnelProcess.on('error', (err) => {
       appendLog(`[tunnel error: ${err.message}]`);
       tunnelProcess = null;
       setStatus('error', err.message);
+      if (desiredState === 'running') {
+        appendLog('[cloudflare] Tunnel error. Retrying in 5s...');
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (desiredState === 'running') {
+            startTunnel(store);
+          }
+        }, 5000);
+      }
     });
   }, 2000);
 
@@ -313,6 +352,8 @@ function startTunnel(store) {
  * Stop the Cloudflare Tunnel.
  */
 function stopTunnel() {
+  desiredState = 'stopped';
+  clearTimers();
   if (tunnelProcess) {
     const pid = tunnelProcess.pid;
     try {

@@ -21,6 +21,9 @@ const fs = require('fs');
  */
 
 let tunnelStatus = 'stopped'; // 'stopped' | 'starting' | 'running' | 'error'
+let desiredState = 'stopped'; // 'stopped' | 'running'
+let reconnectTimer = null;
+let retryCount = 0;
 let tunnelLog = [];
 let statusCallback = null;
 let pollTimer = null;
@@ -219,6 +222,76 @@ function runSetupCommand(args) {
   return runCommand(args);
 }
 
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function getBackoffDelay(attempt) {
+  if (attempt <= 1) return 5000;
+  if (attempt <= 2) return 10000;
+  return 15000;
+}
+
+/**
+ * Schedule an automatic reconnection attempt if the tunnel is in 'running' desired state.
+ */
+function scheduleReconnect(store, delayMs = 5000, reason = '') {
+  if (desiredState !== 'running') return;
+  if (reconnectTimer) return; // already scheduled
+
+  retryCount++;
+  const delaySec = Math.round(delayMs / 1000);
+  appendLog(`[tailscale] ${reason ? reason + '. ' : ''}Retrying connection in ${delaySec}s (attempt ${retryCount})...`);
+
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    if (desiredState !== 'running') return;
+
+    appendLog(`[tailscale] Reconnect attempt ${retryCount}...`);
+    setStatus('starting', `Reconnecting (attempt ${retryCount})...`);
+
+    try {
+      const installed = await checkInstalled();
+      if (!installed.installed) {
+        appendLog('[tailscale] Tailscale CLI not detected or updating. Will retry...');
+        setStatus('error', 'Tailscale CLI unavailable');
+        scheduleReconnect(store, getBackoffDelay(retryCount), 'Tailscale unavailable');
+        return;
+      }
+
+      const authed = await checkAuthenticated();
+      if (!authed) {
+        appendLog('[tailscale] Tailscale daemon not ready or not logged in. Will retry...');
+        setStatus('error', 'Tailscale not logged in / daemon not ready');
+        scheduleReconnect(store, getBackoffDelay(retryCount), 'Tailscale daemon not ready');
+        return;
+      }
+
+      const port = store.get('serverPort');
+      const reset = await runCommand(['funnel', 'reset']);
+      if (reset.output) appendLog(`[reset] ${reset.output}`);
+
+      const r = await runCommand(['funnel', '--bg', String(port)], { timeoutMs: 30000 });
+      appendLog(r.output || (r.success ? 'Funnel started' : 'Funnel command failed'));
+
+      if (!r.success) {
+        setStatus('error', r.output || 'Funnel failed to start');
+        scheduleReconnect(store, getBackoffDelay(retryCount), r.output || 'Funnel command failed');
+        return;
+      }
+
+      startPolling(store);
+    } catch (err) {
+      appendLog(`[tailscale] Reconnect error: ${err.message}`);
+      setStatus('error', err.message);
+      scheduleReconnect(store, getBackoffDelay(retryCount), err.message);
+    }
+  }, delayMs);
+}
+
 /**
  * Start Funnel: `tailscale funnel --bg <port>`.
  *
@@ -227,6 +300,10 @@ function runSetupCommand(args) {
  * `funnel status` to reflect "running" in the UI.
  */
 async function startTunnel(store) {
+  desiredState = 'running';
+  clearReconnectTimer();
+  retryCount = 0;
+
   const port = store.get('serverPort');
   setStatus('starting');
   tunnelLog = [];
@@ -242,6 +319,7 @@ async function startTunnel(store) {
 
   if (!r.success) {
     setStatus('error', r.output);
+    scheduleReconnect(store, getBackoffDelay(1), r.output || 'Initial start failed');
     return { status: tunnelStatus, error: r.output };
   }
 
@@ -255,7 +333,10 @@ async function startTunnel(store) {
  * Stop Funnel by clearing all funnel configuration for this node.
  */
 async function stopTunnel() {
+  desiredState = 'stopped';
+  clearReconnectTimer();
   stopPolling();
+  retryCount = 0;
   const r = await runCommand(['funnel', 'reset']);
   appendLog(r.output || 'Funnel reset');
   setStatus('stopped');
@@ -271,31 +352,45 @@ function killOrphaned() {
 
 /**
  * Start polling `funnel status` to detect when the funnel actually becomes
- * reachable (and to notice manual changes made outside the app).
+ * reachable (and to auto-reconnect if connection is lost).
  */
 function startPolling(store) {
   stopPolling();
   let attempts = 0;
   pollTimer = setInterval(async () => {
+    if (desiredState !== 'running') {
+      stopPolling();
+      return;
+    }
+
     attempts += 1;
     const active = await isFunnelActive(store);
     if (active) {
+      retryCount = 0;
+      clearReconnectTimer();
       setStatus('running');
-      // Keep polling at a slower cadence to catch outside changes
-      if (attempts < 9999) {
-        clearInterval(pollTimer);
-        pollTimer = setInterval(async () => {
-          const stillActive = await isFunnelActive(store);
-          if (!stillActive) {
-            setStatus('stopped');
-            stopPolling();
-          }
-        }, 15000);
-      }
+      appendLog('[tailscale] Funnel connected and active');
+      // Keep polling at a slower cadence to catch outside disconnects / daemon changes
+      clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        if (desiredState !== 'running') {
+          stopPolling();
+          return;
+        }
+        const stillActive = await isFunnelActive(store);
+        if (!stillActive) {
+          appendLog('[tailscale] Funnel connection lost (service disconnected / updating)');
+          setStatus('error', 'Tunnel connection lost');
+          stopPolling();
+          scheduleReconnect(store, 5000, 'Connection lost');
+        }
+      }, 15000);
     } else if (attempts > 30) {
-      // 30 * 1s = 30s with no success → treat as error
+      // 30 * 1s = 30s with no success → treat as error and retry
+      appendLog('[tailscale] Tunnel connection timed out waiting for funnel');
       setStatus('error', 'Tunnel connection timeout');
       stopPolling();
+      scheduleReconnect(store, 10000, 'Connection timeout');
     }
   }, 1000);
 }
