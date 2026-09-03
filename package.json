@@ -22,6 +22,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "fetch-only": "electron . --fetch-only",
+    "fetch-and-serve": "electron . --fetch-and-serve",
     "build": "npm version patch --no-git-tag-version && electron-builder --win",
     "build:minor": "npm version minor --no-git-tag-version && electron-builder --win",
     "build:major": "npm version major --no-git-tag-version && electron-builder --win",

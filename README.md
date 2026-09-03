@@ -93,6 +93,26 @@ To migrate your data between platforms, simply copy the `UnSocial-userdata` fold
 2. **Add a feed** — Paste a profile URL (e.g. `https://www.instagram.com/natgeo/`) into the input bar and click **+ Add Feed**.
 3. **Subscribe** — Copy the local RSS URL from the feed card and add it to your RSS reader.
 
+### One-shot refresh
+
+UnSocial also supports bounded refresh commands that update every configured feed without opening its main window. Close the regular UnSocial app before using them so the batch process can acquire the single-instance lock.
+
+Refresh the feed files and exit immediately:
+
+```bash
+npm run fetch-only
+```
+
+Refresh the files, temporarily serve them on the configured localhost port, and wait for an RSS reader to request every refreshed feed:
+
+```bash
+npm run fetch-and-serve
+```
+
+The second command prints the feed URLs after scraping. Open or refresh your RSS reader at that point. The server exits as soon as every feed has been retrieved, or after a ten-minute timeout. It never launches or automates the RSS reader.
+
+On macOS, install `UnSocial.app` in `/Applications` and double-click `fetch-rss.command` to run the same fetch-and-serve workflow from Finder.
+
 ### Public Access
 
 To make your feeds accessible from the internet (e.g. for phone-based RSS readers), pick a tunnel provider in the **Public Access** panel. UnSocial supports two:
@@ -216,6 +236,7 @@ UnSocial/
 │   ├── preload.js       # Context bridge (IPC API)
 │   ├── feed-server.js   # Local Express RSS server
 │   ├── rss-generator.js # RSS/Atom XML generation
+│   ├── run-once.js      # Bounded refresh and delivery modes
 │   ├── tunnel.js        # Tunnel dispatcher (Cloudflare / Tailscale)
 │   ├── tunnel-cloudflare.js
 │   ├── tunnel-tailscale.js

@@ -4,12 +4,24 @@ const fs = require('fs');
 const Store = require('electron-store');
 const { startFeedServer, stopFeedServer } = require('./feed-server');
 
+const fetchOnlyMode = process.argv.includes('--fetch-only');
+const manualDeliveryMode = process.argv.includes('--fetch-and-serve');
+const batchMode = fetchOnlyMode || manualDeliveryMode;
+
+// Used by the development/test command to operate on the same profile as an
+// installed copy. Packaged builds normally use Electron's standard userData
+// directory and do not need this override.
+const explicitUserDataDir = process.env.UNSOCIAL_USER_DATA_DIR;
+if (explicitUserDataDir) {
+  app.setPath('userData', path.resolve(explicitUserDataDir));
+}
+
 // Force a consistent userData path so data persists across exe replacements.
 // For portable builds, electron-builder sets PORTABLE_EXECUTABLE_DIR.
 // IMPORTANT: Must NOT be the same as portable.unpackDirName ('UnSocial-data')
 // because the portable launcher wipes that directory on update.
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
-if (portableDir) {
+if (!explicitUserDataDir && portableDir) {
   const newUserData = path.join(portableDir, 'UnSocial-userdata');
   const oldUserData = path.join(portableDir, 'UnSocial-data');
 
@@ -47,7 +59,7 @@ if (portableDir) {
   }
 
   app.setPath('userData', newUserData);
-} else if (process.platform === 'darwin') {
+} else if (!explicitUserDataDir && process.platform === 'darwin') {
   // macOS portable mode: when the .app bundle lives outside /Applications,
   // store userData next to the .app — same as the Windows portable behaviour.
   // This lets users share the same UnSocial-userdata folder across platforms.
@@ -454,6 +466,30 @@ app.whenReady().then(async () => {
   // Persist cookies across restarts
   const ses = session.defaultSession;
 
+  if (batchMode) {
+    try {
+      const { fetchAndWaitForReader, refreshConfiguredFeeds } = require('./run-once');
+      const result = fetchOnlyMode
+        ? await refreshConfiguredFeeds(store)
+        : await fetchAndWaitForReader(store);
+      if (result.failed.length > 0) {
+        console.error(`[Batch] Completed with ${result.failed.length} scrape failure(s).`);
+        app.exit(1);
+      } else {
+        console.log(fetchOnlyMode
+          ? '[FetchOnly] RSS feeds updated successfully.'
+          : '[Manual] RSS feeds were delivered successfully.');
+        app.exit(0);
+      }
+    } catch (error) {
+      const modeLabel = fetchOnlyMode ? '[FetchOnly]' : '[Manual]';
+      console.error(`${modeLabel} Failed:`, error.message);
+      await stopFeedServer().catch(() => {});
+      app.exit(1);
+    }
+    return;
+  }
+
   createMainWindow();
   createTray();
   startFeedServer(store);
@@ -626,6 +662,8 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
+  if (batchMode) return;
+
   if (refreshTimeout) clearTimeout(refreshTimeout);
   if (internetCheckInterval) clearInterval(internetCheckInterval);
   if (staleFeedCheckInterval) clearInterval(staleFeedCheckInterval);
