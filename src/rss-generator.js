@@ -82,15 +82,20 @@ async function generateFeed(username, profileData, store, platform) {
   });
 
   for (const post of profileData.posts.slice(0, 10)) {
-    const title = truncate(post.caption || '(no caption)', 120);
+    const rawCaption = post.caption || '';
+    const isAiGuess = isAccessibilityCaption(rawCaption);
+    const displayCaption = isAiGuess ? '' : rawCaption;
+
+    const title = truncate(displayCaption || `Post by @${username}`, 120);
+    const altText = isAiGuess ? escapeHtml(rawCaption) : 'Post image';
     const imageHtml = post.imageUrl
-      ? `<p><img src="${escapeHtml(post.imageUrl)}" alt="Post image" style="max-width:100%;" /></p>`
+      ? `<p><img src="${escapeHtml(post.imageUrl)}" alt="${altText}" style="max-width:100%;" /></p>`
       : '';
     const videoHtml = post.isVideo && post.videoUrl
       ? `<p><video src="${escapeHtml(post.videoUrl)}" controls style="max-width:100%;"></video></p>`
       : '';
-    const captionHtml = post.caption
-      ? `<p>${escapeHtml(post.caption).replace(/\n/g, '<br/>')}</p>`
+    const captionHtml = displayCaption
+      ? `<p>${escapeHtml(displayCaption).replace(/\n/g, '<br/>')}</p>`
       : '';
     const statsHtml = `<p><small>❤️ ${post.likes} · 💬 ${post.comments}</small></p>`;
 
@@ -98,7 +103,7 @@ async function generateFeed(username, profileData, store, platform) {
       title,
       id: post.permalink,
       link: post.permalink,
-      description: truncate(post.caption || '', 300),
+      description: truncate(displayCaption || title, 300),
       content: `${imageHtml}${videoHtml}${captionHtml}${statsHtml}`,
       date: new Date(post.timestamp),
       image: post.imageUrl || undefined,
@@ -136,6 +141,15 @@ function escapeHtml(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function isAccessibilityCaption(text) {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (/^Photo (?:by|shared by) .+ on [A-Za-z]+ \d{1,2}, \d{4}\./i.test(trimmed)) return true;
+  if (/^May be (?:an? |the )?(?:image|cartoon|graphic|photo|illustration|drawing|poster|text) of /i.test(trimmed)) return true;
+  if (/^No photo description available/i.test(trimmed)) return true;
+  return false;
 }
 
 module.exports = { generateFeed, getFeedDir };

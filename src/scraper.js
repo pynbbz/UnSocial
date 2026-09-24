@@ -69,11 +69,16 @@ function loadAndExtract(win, profileUrl, username) {
                 var img = a.querySelector('img');
                 var imgSrc = img ? img.src : '';
                 var altText = img ? (img.alt || '') : '';
+                // Don't treat Instagram's AI image description as post caption
+                var caption = '';
+                if (altText && !altText.startsWith('Photo by') && !altText.startsWith('Photo shared by') && !altText.startsWith('May be') && altText !== 'No photo description available.') {
+                  caption = altText;
+                }
 
                 posts.push({
                   shortcode: shortcode,
                   imageUrl: imgSrc,
-                  caption: altText,
+                  caption: caption,
                   type: match[1],
                 });
               });
@@ -133,10 +138,12 @@ function loadAndExtract(win, profileUrl, username) {
         // ── Build profile from extracted data ──
         const profileData = buildProfileData(username, data);
 
-        // If we found posts from the DOM but they have no timestamps,
-        // fetch each post's individual page via XHR to get full details
-        if (profileData.posts.length > 0 && !profileData.posts[0].timestamp) {
-          await enrichPostDetails(win, profileData.posts.slice(0, 12));
+        // Enrich any posts that lack a timestamp, lack a real caption, or have an AI accessibility caption
+        const postsToEnrich = profileData.posts.filter(
+          (p) => !p.timestamp || !p.caption || isAccessibilityCaption(p.caption)
+        );
+        if (postsToEnrich.length > 0) {
+          await enrichPostDetails(postsToEnrich.slice(0, 12));
         }
 
         // If still no posts, scroll down and retry once
@@ -157,10 +164,15 @@ function loadAndExtract(win, profileUrl, username) {
                 if (seen.has(shortcode)) return;
                 seen.add(shortcode);
                 var img = a.querySelector('img');
+                var altText = img ? (img.alt || '') : '';
+                var caption = '';
+                if (altText && !altText.startsWith('Photo by') && !altText.startsWith('Photo shared by') && !altText.startsWith('May be') && altText !== 'No photo description available.') {
+                  caption = altText;
+                }
                 posts.push({
                   shortcode: shortcode,
                   imageUrl: img ? img.src : '',
-                  caption: img ? (img.alt || '') : '',
+                  caption: caption,
                   type: match[1],
                 });
               });
@@ -181,7 +193,7 @@ function loadAndExtract(win, profileUrl, username) {
               comments: 0,
               permalink: `https://www.instagram.com/p/${p.shortcode}/`,
             }));
-            await enrichPostDetails(win, profileData.posts.slice(0, 12));
+            await enrichPostDetails(profileData.posts.slice(0, 12));
           }
         }
 
@@ -261,11 +273,14 @@ function extractPostsFromEmbeddedJson(jsonBlobs) {
     const edges = findEdges(blob);
     for (const edge of edges) {
       const node = edge.node || edge;
-      const caption =
+      let caption =
         node.edge_media_to_caption?.edges?.[0]?.node?.text ||
         node.caption?.text ||
-        node.accessibility_caption ||
+        (typeof node.caption === 'string' ? node.caption : '') ||
         '';
+      if (isAccessibilityCaption(caption)) {
+        caption = '';
+      }
       const timestamp = node.taken_at_timestamp || node.taken_at;
       const shortcode = node.shortcode || node.code;
       if (!shortcode) continue;
@@ -332,64 +347,174 @@ function extractFromSharedData(sharedData, additionalData) {
 }
 
 /**
- * For posts where we only have shortcodes (from DOM scraping), visit each
- * post's individual page via XHR to get timestamp, caption, likes, etc.
- * This runs inside the hidden browser so it uses the authenticated session.
+ * Detect whether a caption string is an Instagram AI-generated accessibility description.
  */
-async function enrichPostDetails(win, posts) {
-  for (const post of posts) {
-    if (post.timestamp && post.caption) continue; // already enriched
+function isAccessibilityCaption(text) {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (/^Photo (?:by|shared by) .+ on [A-Za-z]+ \d{1,2}, \d{4}\./i.test(trimmed)) return true;
+  if (/^May be (?:an? |the )?(?:image|cartoon|graphic|photo|illustration|drawing|poster|text) of /i.test(trimmed)) return true;
+  if (/^No photo description available/i.test(trimmed)) return true;
+  return false;
+}
 
-    try {
-      const detail = await win.webContents.executeJavaScript(`
-        (function() {
-          return new Promise(function(resolve) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', 'https://www.instagram.com/p/${post.shortcode}/?__a=1&__d=dis', true);
-            xhr.timeout = 10000;
-            xhr.setRequestHeader('X-IG-App-ID', '936619743392459');
-            xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-            xhr.ontimeout = function() { resolve(null); };
-            xhr.onload = function() {
-              try {
-                var data = JSON.parse(xhr.responseText);
-                var item = data.items ? data.items[0] : (data.graphql ? data.graphql.shortcode_media : null);
-                if (item) {
-                  resolve({
-                    caption: (item.caption ? item.caption.text : '') ||
-                             (item.edge_media_to_caption && item.edge_media_to_caption.edges[0] ? item.edge_media_to_caption.edges[0].node.text : ''),
-                    timestamp: item.taken_at_timestamp || item.taken_at || null,
-                    likes: item.like_count || (item.edge_media_preview_like ? item.edge_media_preview_like.count : 0),
-                    comments: item.comment_count || (item.edge_media_to_comment ? item.edge_media_to_comment.count : 0),
-                    imageUrl: item.display_url || (item.image_versions2 && item.image_versions2.candidates[0] ? item.image_versions2.candidates[0].url : ''),
-                    isVideo: item.is_video || item.media_type === 2,
-                    videoUrl: item.video_url || null,
-                  });
-                } else { resolve(null); }
-              } catch(_) { resolve(null); }
-            };
-            xhr.onerror = function() { resolve(null); };
-            xhr.send();
-          });
-        })();
-      `);
+/**
+ * Decode common HTML entities.
+ */
+function decodeHtmlEntities(str) {
+  if (!str) return '';
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#x2019;/g, '\u2019')
+    .replace(/&#x2018;/g, '\u2018')
+    .replace(/&#x201c;/g, '\u201c')
+    .replace(/&#x201d;/g, '\u201d')
+    .replace(/&#x2014;/g, '\u2014')
+    .replace(/&#x2022;/g, '\u2022')
+    .replace(/&#064;/g, '@')
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)));
+}
 
-      if (detail) {
-        if (detail.caption) post.caption = detail.caption;
-        if (detail.timestamp) {
-          post.timestamp = new Date(detail.timestamp * 1000).toISOString();
+/**
+ * Fetch rich post details for a single shortcode without getting blocked.
+ * 1. Primary: Fetches https://www.instagram.com/p/${shortcode}/ with a crawler User-Agent
+ *    (Instagram returns static OpenGraph tags: og:description, og:title, og:image).
+ * 2. Fallback: Fetches https://www.instagram.com/p/${shortcode}/embed/captioned/ with a crawler UA.
+ */
+async function enrichSinglePost(shortcode) {
+  // Method 1: OpenGraph meta tags via Facebook crawler User-Agent
+  try {
+    const res = await fetch(`https://www.instagram.com/p/${shortcode}/`, {
+      headers: {
+        'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    });
+
+    if (res.ok) {
+      const html = await res.text();
+      const mDesc = html.match(/<meta\s+(?:property|name)=["'](?:og:)?description["']\s+content=["']([^"']*)["']/i) ||
+                    html.match(/content=["']([^"']*)["']\s+(?:property|name)=["'](?:og:)?description["']/i);
+      const mTitle = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']/i) ||
+                     html.match(/content=["']([^"']*)["']\s+property=["']og:title["']/i);
+      const mImage = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']*)["']/i) ||
+                     html.match(/content=["']([^"']*)["']\s+property=["']og:image["']/i);
+
+      let caption = '';
+      let likes = 0;
+      let comments = 0;
+      let postDate = null;
+
+      if (mDesc) {
+        const rawDesc = decodeHtmlEntities(mDesc[1]);
+        // Pattern: "681 likes, 215 comments - whatsgoodcalgary on September 23, 2026: \"Caption text here\"."
+        const parsed = rawDesc.match(/^([\d,]+)\s+likes?,\s+([\d,]+)\s+comments?\s+-\s+([^\s]+)\s+on\s+([A-Za-z]+ \d{1,2}, \d{4}):\s*(?:["“']([\s\S]*?)["”'](?:\.\s*)?)?$/);
+        if (parsed) {
+          likes = parseInt(parsed[1].replace(/,/g, ''), 10) || 0;
+          comments = parseInt(parsed[2].replace(/,/g, ''), 10) || 0;
+          postDate = parsed[4];
+          if (parsed[5]) caption = parsed[5].trim();
+        } else {
+          const likesMatch = rawDesc.match(/([\d,]+)\s+likes?/i);
+          if (likesMatch) likes = parseInt(likesMatch[1].replace(/,/g, ''), 10) || 0;
+          const commentsMatch = rawDesc.match(/([\d,]+)\s+comments?/i);
+          if (commentsMatch) comments = parseInt(commentsMatch[1].replace(/,/g, ''), 10) || 0;
+
+          const quoteMatch = rawDesc.match(/:\s*["“']([\s\S]*?)["”'](?:\.\s*)?$/);
+          if (quoteMatch) caption = quoteMatch[1].trim();
         }
-        if (detail.likes) post.likes = detail.likes;
-        if (detail.comments) post.comments = detail.comments;
-        if (detail.imageUrl) post.imageUrl = detail.imageUrl;
-        if (detail.isVideo !== undefined) post.isVideo = detail.isVideo;
-        if (detail.videoUrl) post.videoUrl = detail.videoUrl;
       }
 
-      // Small delay to avoid rate-limiting
-      await sleep(500);
+      if (!caption && mTitle) {
+        const rawTitle = decodeHtmlEntities(mTitle[1]);
+        const titleMatch = rawTitle.match(/Instagram:\s*["“']([\s\S]*?)["”']$/);
+        if (titleMatch) caption = titleMatch[1].trim();
+      }
+
+      if (caption && !isAccessibilityCaption(caption)) {
+        return {
+          caption,
+          likes,
+          comments,
+          postDate,
+          imageUrl: mImage ? decodeHtmlEntities(mImage[1]) : null,
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 2: Embed captioned fallback via Googlebot User-Agent
+  try {
+    const embedRes = await fetch(`https://www.instagram.com/p/${shortcode}/embed/captioned/`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+    });
+
+    if (embedRes.ok) {
+      const html = await embedRes.text();
+      const match = html.match(/class=["']Caption["'][^>]*>([\s\S]*?)<\/div>/i);
+      if (match) {
+        let text = match[1];
+        text = text.replace(/<a class=["']CaptionUsername["'][^>]*>[\s\S]*?<\/a>/i, '');
+        text = text.replace(/<div class=["']CaptionComments["'][\s\S]*$/i, '');
+        text = text.replace(/<br\s*\/?>/gi, '\n');
+        text = text.replace(/<[^>]+>/g, '');
+        const caption = decodeHtmlEntities(text).trim();
+
+        let likes = 0;
+        const likesMatch = html.match(/>([\d,]+)\s+likes<\/a>/i);
+        if (likesMatch) likes = parseInt(likesMatch[1].replace(/,/g, ''), 10) || 0;
+
+        let comments = 0;
+        const commentsMatch = html.match(/View all ([\d,]+) comments<\/a>/i);
+        if (commentsMatch) comments = parseInt(commentsMatch[1].replace(/,/g, ''), 10) || 0;
+
+        if (caption && !isAccessibilityCaption(caption)) {
+          return { caption, likes, comments, postDate: null, imageUrl: null };
+        }
+      }
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+/**
+ * Enrich posts missing real captions or timestamps by fetching their individual post pages.
+ */
+async function enrichPostDetails(posts) {
+  for (const post of posts) {
+    if (post.timestamp && post.caption && !isAccessibilityCaption(post.caption)) {
+      continue; // already enriched with real caption and timestamp
+    }
+
+    try {
+      const detail = await enrichSinglePost(post.shortcode);
+      if (detail) {
+        if (detail.caption && !isAccessibilityCaption(detail.caption)) {
+          post.caption = detail.caption;
+        }
+        if (detail.likes !== undefined && detail.likes > 0) post.likes = detail.likes;
+        if (detail.comments !== undefined && detail.comments > 0) post.comments = detail.comments;
+        if (detail.imageUrl && !post.imageUrl) post.imageUrl = detail.imageUrl;
+        if (detail.postDate && !post.timestamp) {
+          const parsedDate = new Date(detail.postDate);
+          if (!isNaN(parsedDate.getTime())) {
+            post.timestamp = parsedDate.toISOString();
+          }
+        }
+      }
+
+      // Brief delay to be polite to the server
+      await sleep(250);
     } catch (_) {
-      // Skip enrichment for this post silently
+      // Continue to next post
     }
   }
 
@@ -407,4 +532,4 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-module.exports = { scrapeInstagramProfile };
+module.exports = { scrapeInstagramProfile, isAccessibilityCaption, enrichPostDetails, enrichSinglePost };
