@@ -398,6 +398,10 @@ async function refreshOldestFeed() {
     else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
     const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
+    profileData.feedKey = feedKey;
+    profileData.alias = feed.alias;
+    profileData.fullUrl = feed.fullUrl || feed.url;
+    profileData.directExternalLink = Boolean(feed.directExternalLink);
     await generateFeed(feedKey, profileData, store, platform);
 
     // Update only this entry
@@ -1360,6 +1364,7 @@ ipcMain.handle('add-feed', async (_e, input) => {
     subTab: parsed.subTab || null,
     fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' ? (typeof input === 'string' ? input : parsed.fullUrl) : null),
     alias: parsed.alias || username,
+    directExternalLink: Boolean(parsed.directExternalLink),
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
     latestPostDate,
@@ -1371,6 +1376,7 @@ ipcMain.handle('add-feed', async (_e, input) => {
   profileData.feedKey = feedKey;
   profileData.alias = entry.alias;
   profileData.fullUrl = entry.fullUrl;
+  profileData.directExternalLink = entry.directExternalLink;
   await generateFeed(feedKey, profileData, store, platform);
   return entry;
 });
@@ -1561,6 +1567,10 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
 
   const storedFeed = store.get('feeds').find((f) => f.username === username && (f.platform || 'instagram') === platform);
   const feedKey = (storedFeed?.feedKey || username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  profileData.feedKey = feedKey;
+  profileData.alias = storedFeed?.alias;
+  profileData.fullUrl = storedFeed?.fullUrl || storedFeed?.url;
+  profileData.directExternalLink = Boolean(storedFeed?.directExternalLink);
   await generateFeed(feedKey, profileData, store, platform);
 
   // Re-focus main window after hidden scraper window was destroyed
@@ -1615,6 +1625,10 @@ ipcMain.handle('refresh-all', async () => {
         profileData = await scrapeInstagramProfile(feed.username);
       }
       const feedKey = (feed.feedKey || feed.username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      profileData.feedKey = feedKey;
+      profileData.alias = feed.alias;
+      profileData.fullUrl = feed.fullUrl || feed.url;
+      profileData.directExternalLink = Boolean(feed.directExternalLink);
       await generateFeed(feedKey, profileData, store, platform);
 
       // Re-read store and update only this entry to avoid overwriting concurrent additions
@@ -1639,6 +1653,28 @@ ipcMain.handle('refresh-all', async () => {
   }
 
   return results;
+});
+
+ipcMain.handle('toggle-reddit-direct-link', async (_e, username, platform = 'reddit') => {
+  const feeds = store.get('feeds');
+  const feed = feeds.find((f) => f.username === username && (f.platform || 'instagram') === platform);
+  if (!feed) throw new Error('Feed not found');
+  feed.directExternalLink = !feed.directExternalLink;
+  store.set('feeds', feeds);
+
+  try {
+    const profileData = await scrapeReddit(feed.fullUrl || feed.url);
+    const feedKey = (feed.feedKey || feed.username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    profileData.feedKey = feedKey;
+    profileData.alias = feed.alias;
+    profileData.fullUrl = feed.fullUrl || feed.url;
+    profileData.directExternalLink = Boolean(feed.directExternalLink);
+    await generateFeed(feedKey, profileData, store, platform);
+  } catch (err) {
+    console.error('Failed to regenerate feed on toggle direct link:', err);
+  }
+
+  return feed;
 });
 
 ipcMain.handle('get-server-port', () => {
@@ -2011,14 +2047,7 @@ function parseRedditInput(input) {
     const sort = u.searchParams.get('sort') || 'new';
     const t = u.searchParams.get('t') || '';
 
-    let alias = `r/${subName}`;
-    if (q) {
-      const shortQ = q.length > 25 ? q.slice(0, 24) + '…' : q;
-      alias += ` (search: ${shortQ})`;
-    } else {
-      alias += ` (search)`;
-    }
-
+    const alias = subName && subName !== 'all' ? `r/${subName}` : 'Reddit';
     const qSlug = q.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
     const username = `r-${subName}-search-${qSlug || 'query'}-${sort}${t ? '-' + t : ''}`;
 
@@ -2042,10 +2071,9 @@ function parseRedditInput(input) {
     const sort = subMatch[2] ? subMatch[2].toLowerCase() : (u.pathname.includes('/top') ? 'top' : 'hot');
     const t = u.searchParams.get('t') || '';
 
-    let alias = `r/${subName}`;
+    const alias = `r/${subName}`;
     let username = `r-${subName}`;
     if (sort !== 'hot' || t) {
-      alias += ` (${sort}${t ? ' ' + t : ''})`;
       username += `-${sort}${t ? '-' + t : ''}`;
     }
 
@@ -2070,7 +2098,7 @@ function parseRedditInput(input) {
       redditType: 'user',
       subName: `u/${userName}`,
       username: `u-${userName}-submitted`,
-      alias: `u/${userName} (submitted)`,
+      alias: `u/${userName}`,
       fullUrl: u.toString(),
     };
   }

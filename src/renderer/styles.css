@@ -1713,4 +1713,85 @@ body {
   border-color: #e03d00;
 }
 
+/* ── Reddit Direct Media Link Checkbox & Badge ────────────────────────────── */
+
+.reddit-checkbox-group {
+  margin-top: -2px;
+  margin-bottom: 2px;
+}
+
+.reddit-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 69, 0, 0.05);
+  border: 1px solid rgba(255, 69, 0, 0.2);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.reddit-checkbox-label:hover {
+  background: rgba(255, 69, 0, 0.1);
+  border-color: rgba(255, 69, 0, 0.35);
+}
+
+.reddit-checkbox {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: #ff4500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.reddit-checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reddit-checkbox-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.reddit-checkbox-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.feed-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 69, 0, 0.15);
+  color: #ff5722;
+  border: 1px solid rgba(255, 69, 0, 0.3);
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+.feed-actions .btn-direct-link.is-active {
+  background: rgba(255, 69, 0, 0.18);
+  border-color: #ff4500;
+  color: #ff4500;
+}
+
+.feed-actions .btn-direct-link:not(.is-active):hover {
+  background: rgba(255, 69, 0, 0.1);
+  border-color: rgba(255, 69, 0, 0.4);
+  color: #ff4500;
+}
+
+
 

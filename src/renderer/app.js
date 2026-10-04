@@ -1156,6 +1156,7 @@ function buildFeedCard(feed) {
           <div class="feed-info">
             <div class="feed-name">
               <span class="feed-alias-text">${escapeHtml(feed.alias || feed.username)}</span>
+              ${(platform === 'reddit' && feed.directExternalLink) ? '<span class="feed-tag-badge" title="Direct Media Link active (primary RSS link opens external video directly)">▶ Direct Video</span>' : ''}
             </div>
             <div class="feed-meta">
               <a class="feed-username-link" href="#" data-url="${escapeHtml(feed.url)}" title="Open in browser">${userPrefix}${escapeHtml(feed.username)}</a>
@@ -1176,6 +1177,15 @@ function buildFeedCard(feed) {
         </div>
       </div>
       <div class="feed-actions">
+        ${platform === 'reddit' ? `
+        <button class="btn btn-outline btn-icon-action feed-action-btn btn-direct-link${feed.directExternalLink ? ' is-active' : ''}" title="${feed.directExternalLink ? 'Direct media link active (primary RSS link opens external video directly). Click to toggle.' : 'Direct media link inactive (opens Reddit comments). Click to toggle.'}" aria-label="Toggle direct media link">
+          <span class="btn-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="${feed.directExternalLink ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+          </span>
+        </button>
+        ` : ''}
         <button class="btn btn-outline btn-icon-action feed-action-btn btn-rename" title="Rename" aria-label="Rename feed">
           <span class="btn-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1243,6 +1253,28 @@ function buildFeedCard(feed) {
       copyToClipboard(publicUrl);
       toast('RSS URL copied!', 'success');
     });
+
+    // Toggle direct media link for Reddit feeds
+    const btnDirectLink = card.querySelector('.btn-direct-link');
+    if (btnDirectLink) {
+      btnDirectLink.addEventListener('click', async () => {
+        try {
+          btnDirectLink.disabled = true;
+          const updated = await window.api.toggleRedditDirectLink(feed.username, platform);
+          toast(
+            updated.directExternalLink
+              ? `Direct video link enabled for ${feed.alias || feed.username}`
+              : `Direct video link disabled for ${feed.alias || feed.username}`,
+            'success'
+          );
+          await renderFeeds();
+        } catch (err) {
+          toast(err.message || 'Failed to toggle direct media link', 'error');
+        } finally {
+          btnDirectLink.disabled = false;
+        }
+      });
+    }
 
     card.querySelector('.btn-rename').addEventListener('click', async () => {
       const aliasEl = card.querySelector('.feed-alias-text');
@@ -1505,6 +1537,7 @@ const redditUserName = $('#reddit-user-name');
 const redditUserSortPills = document.querySelectorAll('#reddit-user-sort-pills .reddit-pill');
 
 const redditPasteUrl = $('#reddit-paste-url');
+const redditDirectLink = $('#reddit-direct-link');
 const redditCustomAlias = $('#reddit-custom-alias');
 const redditPreviewUrl = $('#reddit-preview-url');
 const redditModalError = $('#reddit-modal-error');
@@ -1555,13 +1588,11 @@ function updateRedditBuilder() {
       if (redditSubTimeframeGroup) redditSubTimeframeGroup.style.display = 'flex';
       const time = getActivePillValue(redditSubTimeframePills, 'time') || 'week';
       targetUrl = `https://www.reddit.com/r/${sub}/top/?t=${time}`;
-      const timeLabels = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' };
-      suggestedAlias = `r/${sub} - Top (${timeLabels[time] || time})`;
     } else {
       if (redditSubTimeframeGroup) redditSubTimeframeGroup.style.display = 'none';
       targetUrl = `https://www.reddit.com/r/${sub}/${sort === 'hot' ? '' : sort + '/'}`;
-      suggestedAlias = `r/${sub} - ${sort.charAt(0).toUpperCase() + sort.slice(1)}`;
     }
+    suggestedAlias = `r/${sub}`;
   } else if (activeRedditTab === 'search') {
     const rawSub = redditSearchSub ? redditSearchSub.value : '';
     const sub = cleanSubName(rawSub);
@@ -1577,17 +1608,17 @@ function updateRedditBuilder() {
 
     if (sub) {
       targetUrl = `https://www.reddit.com/r/${sub}/search/?q=${qParam}&restrict_sr=1&sort=${sort}${timeParam}`;
-      suggestedAlias = `r/${sub} [${query || 'Search'}]`;
+      suggestedAlias = `r/${sub}`;
     } else {
       targetUrl = `https://www.reddit.com/search/?q=${qParam}&sort=${sort}${timeParam}`;
-      suggestedAlias = `Reddit [${query || 'Search'}]`;
+      suggestedAlias = `Reddit`;
     }
   } else if (activeRedditTab === 'user') {
     const rawUser = redditUserName ? redditUserName.value : '';
     const user = cleanUserName(rawUser) || 'username';
     const sort = getActivePillValue(redditUserSortPills, 'sort') || 'submitted';
     targetUrl = `https://www.reddit.com/user/${user}/${sort === 'submitted' ? 'submitted/' : sort + '/'}`;
-    suggestedAlias = `u/${user} (${sort === 'submitted' ? 'Submissions' : sort})`;
+    suggestedAlias = `u/${user}`;
   } else if (activeRedditTab === 'direct') {
     targetUrl = (redditPasteUrl ? redditPasteUrl.value : '').trim() || 'https://www.reddit.com/';
     suggestedAlias = (redditCustomAlias ? redditCustomAlias.value : '') || 'Reddit Feed';
@@ -1606,6 +1637,8 @@ async function openRedditModal(initialUrl = '') {
     redditModalError.textContent = '';
   }
   userCustomizedAlias = false;
+  if (redditDirectLink) redditDirectLink.checked = false;
+
 
   const urlToParse = initialUrl || (inputUrl ? inputUrl.value.trim() : '');
   if (urlToParse && (urlToParse.includes('reddit.com') || /^r\/|^u\//i.test(urlToParse))) {
@@ -1793,6 +1826,7 @@ function setupRedditModal() {
     }
 
     const alias = (redditCustomAlias ? redditCustomAlias.value : '').trim() || undefined;
+    const directExternalLink = Boolean(redditDirectLink && redditDirectLink.checked);
 
     btnSubmitRedditModal.disabled = true;
     const spinner = btnSubmitRedditModal.querySelector('.btn-spinner');
@@ -1805,6 +1839,7 @@ function setupRedditModal() {
         targetUrl,
         fullUrl: targetUrl,
         alias,
+        directExternalLink,
         category: 'Reddit',
         platform: 'reddit'
       });

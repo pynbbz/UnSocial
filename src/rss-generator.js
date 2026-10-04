@@ -68,7 +68,7 @@ async function generateFeed(username, profileData, store, platform) {
   const selfUrl = `${feedBase}/feed/${feedKey}`;
 
   const feedTitle = platform === 'reddit'
-    ? `${profileData.alias || profileData.fullName || username} – ${meta.label}`
+    ? (profileData.alias || profileData.fullName || username)
     : `${profileData.fullName || username} (@${username}) – ${meta.label}`;
 
   const feed = new Feed({
@@ -100,22 +100,9 @@ async function generateFeed(username, profileData, store, platform) {
 
     const title = post.title || truncate(displayCaption || `Post by ${username}`, 120);
     const altText = isAiGuess ? escapeHtml(rawCaption) : 'Post image';
-    const postImg = post.imageUrl || (post.media && post.media.find(m => m.type === 'image')?.url);
+    let postImg = post.imageUrl || (post.media && post.media.find(m => m.type === 'image')?.url);
     const postVid = post.videoUrl || (post.media && post.media.find(m => m.type === 'video')?.url);
     const isVideo = Boolean(post.isVideo || postVid);
-
-    const imageHtml = postImg
-      ? `<p><img src="${escapeHtml(postImg)}" alt="${altText}" style="max-width:100%;" /></p>`
-      : '';
-    const videoHtml = isVideo && postVid
-      ? `<p><video src="${escapeHtml(postVid)}" controls style="max-width:100%;"></video></p>`
-      : '';
-    const captionHtml = displayCaption && displayCaption !== post.title && displayCaption !== `u/${post.author}`
-      ? `<p>${escapeHtml(displayCaption).replace(/\n/g, '<br/>')}</p>`
-      : '';
-    const externalLinkHtml = post.externalUrl && post.externalUrl !== post.permalink
-      ? `<p><a href="${escapeHtml(post.externalUrl)}" target="_blank" rel="noopener">🔗 View Source Article</a></p>`
-      : '';
 
     const cleanAuthor = (post.author || '').replace(/^u\//i, '');
     const authorLine = cleanAuthor ? `Posted by u/${escapeHtml(cleanAuthor)} · ` : '';
@@ -125,12 +112,55 @@ async function generateFeed(username, profileData, store, platform) {
     const formattedComments = Number(commentsCount).toLocaleString();
     const statsHtml = `<p><small>${authorLine}${platform === 'reddit' ? '🔺' : '❤️'} ${formattedLikes} · 💬 ${formattedComments}</small></p>`;
 
+    const isDirectExternal = Boolean(profileData.directExternalLink && post.externalUrl && post.externalUrl !== post.permalink);
+    const primaryLink = isDirectExternal ? post.externalUrl : (post.permalink || siteUrl);
+    const primaryId = post.permalink || `${siteUrl}#${post.id || i}`;
+
+    const ytId = extractYouTubeId(post.externalUrl || post.contentHref);
+
+    let imageHtml = postImg
+      ? `<p><img src="${escapeHtml(postImg)}" alt="${altText}" style="max-width:100%;" /></p>`
+      : '';
+    let videoHtml = isVideo && postVid
+      ? `<p><video src="${escapeHtml(postVid)}" controls style="max-width:100%;"></video></p>`
+      : '';
+    const captionHtml = displayCaption && displayCaption !== post.title && displayCaption !== `u/${post.author}` && displayCaption !== post.externalUrl
+      ? `<p>${escapeHtml(displayCaption).replace(/\n/g, '<br/>')}</p>`
+      : '';
+
+    let externalMediaHtml = '';
+    if (isDirectExternal) {
+      if (ytId) {
+        if (!postImg) {
+          postImg = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
+        }
+        externalMediaHtml = `
+<p><iframe width="100%" height="360" src="https://www.youtube-nocookie.com/embed/${ytId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="max-width:100%; aspect-ratio:16/9; border-radius:8px;"></iframe></p>
+<p><a href="${escapeHtml(post.externalUrl)}" target="_blank" rel="noopener"><img src="https://img.youtube.com/vi/${ytId}/hqdefault.jpg" alt="${escapeHtml(title)}" style="max-width:100%; border-radius:8px;" /></a></p>
+<p>▶️ <a href="${escapeHtml(post.externalUrl)}" target="_blank" rel="noopener"><strong>Watch Video (${escapeHtml(post.externalUrl)})</strong></a></p>
+<p>💬 <a href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">View Discussion on Reddit (${formattedComments} comments)</a></p>
+`;
+        imageHtml = '';
+        videoHtml = '';
+      } else {
+        externalMediaHtml = `
+<p>🔗 <a href="${escapeHtml(post.externalUrl)}" target="_blank" rel="noopener"><strong>Open Source: ${escapeHtml(post.externalUrl)}</strong></a></p>
+<p>💬 <a href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">View Discussion on Reddit (${formattedComments} comments)</a></p>
+`;
+      }
+    } else {
+      const extUrl = post.externalUrl && post.externalUrl !== post.permalink ? post.externalUrl : null;
+      if (extUrl) {
+        externalMediaHtml = `<p><a href="${escapeHtml(extUrl)}" target="_blank" rel="noopener">🔗 View Source Article</a></p>`;
+      }
+    }
+
     feed.addItem({
       title,
-      id: post.permalink || `${siteUrl}#${post.id || i}`,
-      link: post.permalink || siteUrl,
+      id: primaryId,
+      link: primaryLink,
       description: truncate(displayCaption || title, 300),
-      content: `${imageHtml}${videoHtml}${captionHtml}${externalLinkHtml}${statsHtml}`,
+      content: `${imageHtml}${videoHtml}${externalMediaHtml}${captionHtml}${statsHtml}`,
       date: new Date(post.timestamp),
       image: postImg || undefined,
       author: [
@@ -143,7 +173,11 @@ async function generateFeed(username, profileData, store, platform) {
   }
 
   // Write both RSS 2.0 and Atom
-  const rssXml = feed.rss2();
+  let rssXml = feed.rss2();
+  // Fix unescaped ampersands in enclosure URLs for strict XML parsers (e.g. FreshRSS / SimplePie)
+  rssXml = rssXml.replace(/<enclosure\s+url="([^"]+)"/g, (match, url) => {
+    return `<enclosure url="${url.replace(/&/g, "&amp;").replace(/&amp;amp;/g, "&amp;")}"`;
+  });
   const atomXml = feed.atom1();
 
   fs.writeFileSync(path.join(feedDir, `${feedKey}.rss.xml`), rssXml, 'utf-8');
@@ -153,7 +187,10 @@ async function generateFeed(username, profileData, store, platform) {
 }
 
 function getFeedDir() {
-  return path.join(app.getPath('userData'), 'feeds');
+  if (app && typeof app.getPath === 'function') {
+    return path.join(app.getPath('userData'), 'feeds');
+  }
+  return path.join(require('os').tmpdir(), 'unsocial-feeds');
 }
 
 function truncate(str, max) {
@@ -178,4 +215,11 @@ function isAccessibilityCaption(text) {
   return false;
 }
 
-module.exports = { generateFeed, getFeedDir };
+function extractYouTubeId(url) {
+  if (!url || typeof url !== 'string') return null;
+  const m = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|(?:embed|v|shorts)\/))([a-zA-Z0-9_-]{11})/i);
+  return m ? m[1] : null;
+}
+
+module.exports = { generateFeed, getFeedDir, extractYouTubeId };
+

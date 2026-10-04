@@ -21,11 +21,13 @@ contextBridge.exposeInMainWorld('api', {
   checkLinkedInLogin: () => ipcRenderer.invoke('check-linkedin-login'),
   logoutLinkedIn: () => ipcRenderer.invoke('logout-linkedin'),
 
-  // Reddit Auth
+  // Reddit Auth & Features
   openRedditLogin: () => ipcRenderer.invoke('open-reddit-login'),
   checkRedditLogin: () => ipcRenderer.invoke('check-reddit-login'),
   logoutReddit: () => ipcRenderer.invoke('logout-reddit'),
   parseRedditUrl: (url) => ipcRenderer.invoke('parse-reddit-url', url),
+  toggleRedditDirectLink: (username, platform) => ipcRenderer.invoke('toggle-reddit-direct-link', username, platform),
+
 
   // Force reset (nuclear option — clears ALL data for a platform)
   forceResetPlatform: (platform) => ipcRenderer.invoke('force-reset-platform', platform),
