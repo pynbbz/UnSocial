@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   // Feeds
   getFeeds: () => ipcRenderer.invoke('get-feeds'),
   addFeed: (url) => ipcRenderer.invoke('add-feed', url),
-  renameFeed: (username, platform, newAlias) => ipcRenderer.invoke('rename-feed', username, platform, newAlias),
+  renameFeed: (username, platform, newAlias, filterKeywords) => ipcRenderer.invoke('rename-feed', username, platform, newAlias, filterKeywords),
   toggleFeedBoost: (username, platform) => ipcRenderer.invoke('toggle-feed-boost', username, platform),
   removeFeed: (username, platform) => ipcRenderer.invoke('remove-feed', username, platform),
   refreshFeed: (username, platform) => ipcRenderer.invoke('refresh-feed', username, platform),

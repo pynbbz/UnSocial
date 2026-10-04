@@ -71,6 +71,53 @@ async function generateFeed(username, profileData, store, platform) {
     ? (profileData.alias || profileData.fullName || username)
     : `${profileData.fullName || username} (@${username}) – ${meta.label}`;
 
+  // Cache raw/unfiltered profile data to disk for fast regeneration on filter or alias updates
+  try {
+    const dataPath = path.join(feedDir, `${feedKey}.data.json`);
+    const dataToSave = {
+      username,
+      platform,
+      fullName: profileData.fullName,
+      biography: profileData.biography,
+      profilePicUrl: profileData.profilePicUrl,
+      fullUrl: profileData.fullUrl,
+      siteUrl,
+      alias: profileData.alias,
+      feedKey,
+      directExternalLink: profileData.directExternalLink,
+      posts: profileData.posts || []
+    };
+    fs.writeFileSync(dataPath, JSON.stringify(dataToSave), 'utf-8');
+  } catch (_) {}
+
+  // Resolve filter phrases from profileData or stored feed
+  const feedEntry = (store && typeof store.get === 'function')
+    ? (store.get('feeds') || []).find(f => (f.feedKey || f.username) === feedKey || f.username === username)
+    : null;
+  const filterKeywords = (profileData && profileData.filterKeywords)
+    || (feedEntry && feedEntry.filterKeywords)
+    || [];
+  const activeFilters = (Array.isArray(filterKeywords) ? filterKeywords : [])
+    .map(w => String(w).trim())
+    .filter(Boolean);
+
+  const rawPosts = Array.isArray(profileData.posts) ? profileData.posts : [];
+  const filteredPosts = rawPosts.filter(post => {
+    const rawCaption = post.caption || '';
+    const isAiGuess = isAccessibilityCaption(rawCaption);
+    const displayCaption = isAiGuess ? '' : rawCaption;
+    const title = post.title || truncate(displayCaption || `Post by ${username}`, 120);
+
+    if (activeFilters.length > 0) {
+      for (const phrase of activeFilters) {
+        if (matchesFilterPhrase(title, phrase) || (post.title && matchesFilterPhrase(post.title, phrase))) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
+
   const feed = new Feed({
     title: feedTitle,
     description: profileData.biography || `${meta.label} posts from ${username}`,
@@ -79,8 +126,8 @@ async function generateFeed(username, profileData, store, platform) {
     language: 'en',
     image: meta.favicon,
     favicon: meta.favicon,
-    updated: profileData.posts.length
-      ? new Date(profileData.posts[0].timestamp)
+    updated: filteredPosts.length
+      ? new Date(filteredPosts[0].timestamp)
       : new Date(),
     feedLinks: {
       rss: selfUrl,
@@ -92,8 +139,8 @@ async function generateFeed(username, profileData, store, platform) {
     },
   });
 
-  for (let i = 0; i < Math.min(profileData.posts.length, 25); i++) {
-    const post = profileData.posts[i];
+  for (let i = 0; i < Math.min(filteredPosts.length, 25); i++) {
+    const post = filteredPosts[i];
     const rawCaption = post.caption || '';
     const isAiGuess = isAccessibilityCaption(rawCaption);
     const displayCaption = isAiGuess ? '' : rawCaption;
@@ -183,7 +230,34 @@ async function generateFeed(username, profileData, store, platform) {
   fs.writeFileSync(path.join(feedDir, `${feedKey}.rss.xml`), rssXml, 'utf-8');
   fs.writeFileSync(path.join(feedDir, `${feedKey}.atom.xml`), atomXml, 'utf-8');
 
-  return { rss: rssXml, atom: atomXml };
+  return { rss: rssXml, atom: atomXml, postCount: filteredPosts.length, rawPostCount: rawPosts.length };
+}
+
+/**
+ * Test whether a title contains an excluded word or whole phrase.
+ * If the phrase starts/ends with an alphanumeric character or underscore,
+ * Unicode-aware boundary checks ensure whole-word/phrase matches without false positives.
+ */
+function matchesFilterPhrase(title, phrase) {
+  if (!title || typeof title !== 'string' || !phrase || typeof phrase !== 'string') {
+    return false;
+  }
+  const cleanPhrase = phrase.trim();
+  if (!cleanPhrase) return false;
+
+  const escaped = cleanPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const startsWithWordChar = /^[\p{L}\p{N}_]/u.test(cleanPhrase);
+  const endsWithWordChar = /[\p{L}\p{N}_]$/u.test(cleanPhrase);
+
+  const startPattern = startsWithWordChar ? '(?<![\\p{L}\\p{N}_])' : '';
+  const endPattern = endsWithWordChar ? '(?![\\p{L}\\p{N}_])' : '';
+
+  try {
+    const regex = new RegExp(`${startPattern}${escaped}${endPattern}`, 'iu');
+    return regex.test(title);
+  } catch (_) {
+    return title.toLowerCase().includes(cleanPhrase.toLowerCase());
+  }
 }
 
 function getFeedDir() {
@@ -221,5 +295,5 @@ function extractYouTubeId(url) {
   return m ? m[1] : null;
 }
 
-module.exports = { generateFeed, getFeedDir, extractYouTubeId };
+module.exports = { generateFeed, getFeedDir, extractYouTubeId, matchesFilterPhrase };
 

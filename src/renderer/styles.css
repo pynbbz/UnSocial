@@ -999,7 +999,7 @@ body {
 
 .feed-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -1036,9 +1036,28 @@ body {
 .feed-name {
   font-weight: 600;
   font-size: 14px;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.feed-alias-text {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .feed-meta {
@@ -1916,10 +1935,74 @@ body {
   background: rgba(255, 69, 0, 0.15);
   color: #ff5722;
   border: 1px solid rgba(255, 69, 0, 0.3);
-  margin-left: 6px;
   vertical-align: middle;
   line-height: 1.4;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
+.feed-filter-badge {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+  border: 1px solid rgba(239, 68, 68, 0.35) !important;
+}
 
+.feed-card-header.is-editing {
+  align-items: flex-start;
+}
 
+.feed-edit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0 6px 0;
+}
+
+.feed-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.feed-edit-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+
+.feed-edit-container .rename-input,
+.feed-edit-container .feed-filter-input {
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  width: 100%;
+  max-width: 440px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.feed-edit-container .rename-input:focus,
+.feed-edit-container .feed-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(225, 48, 108, 0.2);
+}
+
+.feed-edit-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-top: 1px;
+  max-width: 440px;
+}
+
+.feed-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}

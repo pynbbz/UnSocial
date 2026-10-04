@@ -1155,8 +1155,11 @@ function buildFeedCard(feed) {
           </div>
           <div class="feed-info">
             <div class="feed-name">
-              <span class="feed-alias-text">${escapeHtml(feed.alias || feed.username)}</span>
-              ${(platform === 'reddit' && feed.directExternalLink) ? '<span class="feed-tag-badge" title="Direct Media Link active (primary RSS link opens external video directly)">▶ Direct Video</span>' : ''}
+              <span class="feed-alias-text" title="${escapeHtml(feed.alias || feed.username)}">${escapeHtml(feed.alias || feed.username)}</span>
+              <span class="feed-badges">
+                ${(platform === 'reddit' && feed.directExternalLink) ? '<span class="feed-tag-badge" title="Direct Media Link active (primary RSS link opens external video directly)">▶ Direct Video</span>' : ''}
+                ${(Array.isArray(feed.filterKeywords) && feed.filterKeywords.length > 0) ? `<span class="feed-tag-badge feed-filter-badge" title="Filtered titles containing: ${escapeHtml(feed.filterKeywords.join(', '))}">🚫 ${feed.filterKeywords.length} filter${feed.filterKeywords.length > 1 ? 's' : ''}</span>` : ''}
+              </span>
             </div>
             <div class="feed-meta">
               <a class="feed-username-link" href="#" data-url="${escapeHtml(feed.url)}" title="Open in browser">${userPrefix}${escapeHtml(feed.username)}</a>
@@ -1246,30 +1249,78 @@ function buildFeedCard(feed) {
     });
 
     card.querySelector('.btn-rename').addEventListener('click', async () => {
-      const aliasEl = card.querySelector('.feed-alias-text');
-      const currentAlias = feed.alias || feed.username;
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = currentAlias;
-      input.className = 'rename-input';
-      input.style.cssText = 'font-size:inherit;padding:2px 6px;border:1px solid var(--accent);border-radius:4px;background:var(--bg-card);color:var(--text);width:200px;';
-      aliasEl.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const doRename = async () => {
-        const newAlias = input.value.trim();
-        if (newAlias && newAlias !== currentAlias) {
-          await window.api.renameFeed(feed.username, platform, newAlias);
-          toast('Feed renamed!', 'success');
-        }
+      const feedHeader = card.querySelector('.feed-card-header');
+      const feedInfo = card.querySelector('.feed-info');
+      // If already in edit mode, toggle it off
+      if (feedInfo.querySelector('.feed-edit-container')) {
         await renderFeeds();
+        return;
+      }
+
+      const currentAlias = feed.alias || feed.username;
+      const currentKeywords = (Array.isArray(feed.filterKeywords) ? feed.filterKeywords : []).join(', ');
+
+      feedHeader.classList.add('is-editing');
+      feedInfo.innerHTML = `
+        <div class="feed-edit-container">
+          <div class="feed-edit-row">
+            <label class="feed-edit-label" for="rename-input-${feedKey}">Feed Name</label>
+            <input type="text" id="rename-input-${feedKey}" class="rename-input" value="${escapeHtml(currentAlias)}" placeholder="Feed alias" />
+          </div>
+          <div class="feed-edit-row feed-filter-row">
+            <label class="feed-edit-label" for="filter-input-${feedKey}">Exclude Titles Containing (words or phrases)</label>
+            <input type="text" id="filter-input-${feedKey}" class="feed-filter-input" value="${escapeHtml(currentKeywords)}" placeholder="e.g. sponsor, giveaway, breaking news (comma-separated)" />
+            <span class="feed-edit-hint">Articles with titles containing these words or whole phrases will be excluded from the generated RSS.</span>
+          </div>
+          <div class="feed-edit-actions">
+            <button type="button" class="btn btn-primary btn-sm btn-save-edit">Save</button>
+            <button type="button" class="btn btn-outline btn-sm btn-cancel-edit">Cancel</button>
+          </div>
+        </div>
+      `;
+
+      const renameInput = feedInfo.querySelector('.rename-input');
+      const filterInput = feedInfo.querySelector('.feed-filter-input');
+      const saveBtn = feedInfo.querySelector('.btn-save-edit');
+      const cancelBtn = feedInfo.querySelector('.btn-cancel-edit');
+
+      renameInput.focus();
+      renameInput.select();
+
+      const doSave = async () => {
+        const newAlias = renameInput.value.trim() || currentAlias;
+        const filterVal = filterInput.value.trim();
+        const filterKeywords = filterVal
+          ? filterVal.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)
+          : [];
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+        try {
+          await window.api.renameFeed(feed.username, platform, newAlias, filterKeywords);
+          toast('Feed updated!', 'success');
+        } catch (err) {
+          toast('Failed to update feed: ' + (err.message || err), 'error');
+        } finally {
+          await renderFeeds();
+        }
       };
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') doRename();
-        if (e.key === 'Escape') renderFeeds();
-      });
-      input.addEventListener('blur', doRename);
+
+      saveBtn.addEventListener('click', doSave);
+      cancelBtn.addEventListener('click', () => renderFeeds());
+
+      const handleKey = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doSave();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          renderFeeds();
+        }
+      };
+
+      renameInput.addEventListener('keydown', handleKey);
+      filterInput.addEventListener('keydown', handleKey);
     });
 
     card.querySelector('.btn-refresh').addEventListener('click', async (e) => {

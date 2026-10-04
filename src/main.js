@@ -402,14 +402,15 @@ async function refreshOldestFeed() {
     profileData.alias = feed.alias;
     profileData.fullUrl = feed.fullUrl || feed.url;
     profileData.directExternalLink = Boolean(feed.directExternalLink);
-    await generateFeed(feedKey, profileData, store, platform);
+    profileData.filterKeywords = feed.filterKeywords || [];
+    const feedResult = await generateFeed(feedKey, profileData, store, platform);
 
     // Update only this entry
     const currentFeeds = store.get('feeds');
     const idx = currentFeeds.findIndex(f => f.username === feed.username && (f.platform || 'instagram') === platform);
     if (idx !== -1) {
       currentFeeds[idx].lastChecked = new Date().toISOString();
-      currentFeeds[idx].postCount = profileData.posts.length;
+      currentFeeds[idx].postCount = feedResult?.postCount ?? profileData.posts.length;
       const realPosts = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
       const postsWithTs = realPosts.length > 0 ? realPosts : profileData.posts.filter(p => p.timestamp);
       currentFeeds[idx].latestPostDate = postsWithTs.length > 0
@@ -585,14 +586,19 @@ app.whenReady().then(async () => {
               else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
-              await generateFeed(fk, profileData, store, plat);
+              profileData.feedKey = fk;
+              profileData.alias = feed.alias;
+              profileData.fullUrl = feed.fullUrl || feed.url;
+              profileData.directExternalLink = Boolean(feed.directExternalLink);
+              profileData.filterKeywords = feed.filterKeywords || [];
+              const genResult = await generateFeed(fk, profileData, store, plat);
 
               // Re-read store and update only this entry to avoid overwriting concurrent additions
               const currentFeeds = store.get('feeds');
               const idx = currentFeeds.findIndex(f => f.username === feed.username && (f.platform || 'instagram') === (plat));
               if (idx !== -1) {
                 currentFeeds[idx].lastChecked = new Date().toISOString();
-                currentFeeds[idx].postCount = profileData.posts.length;
+                currentFeeds[idx].postCount = genResult?.postCount ?? profileData.posts.length;
                 const realPostsT = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
                 const postsWithTsT = realPostsT.length > 0 ? realPostsT : profileData.posts.filter(p => p.timestamp);
                 currentFeeds[idx].latestPostDate = postsWithTsT.length > 0
@@ -1365,6 +1371,7 @@ ipcMain.handle('add-feed', async (_e, input) => {
     fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' ? (typeof input === 'string' ? input : parsed.fullUrl) : null),
     alias: parsed.alias || username,
     directExternalLink: Boolean(parsed.directExternalLink),
+    filterKeywords: [],
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
     latestPostDate,
@@ -1377,7 +1384,12 @@ ipcMain.handle('add-feed', async (_e, input) => {
   profileData.alias = entry.alias;
   profileData.fullUrl = entry.fullUrl;
   profileData.directExternalLink = entry.directExternalLink;
-  await generateFeed(feedKey, profileData, store, platform);
+  profileData.filterKeywords = entry.filterKeywords;
+  const genResultAdd = await generateFeed(feedKey, profileData, store, platform);
+  if (genResultAdd && typeof genResultAdd.postCount === 'number') {
+    entry.postCount = genResultAdd.postCount;
+    store.set('feeds', feeds);
+  }
   return entry;
 });
 
@@ -1428,6 +1440,7 @@ async function handleAddCustomFeed(parsed) {
     scrollSelector: scrollSelector || null,
     scrollCount: scrollCount || 0,
     alias: feedName || username,
+    filterKeywords: [],
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
     latestPostDate,
@@ -1436,7 +1449,15 @@ async function handleAddCustomFeed(parsed) {
   feeds.push(entry);
   store.set('feeds', feeds);
 
-  await generateFeed(feedKey, profileData, store, 'custom');
+  profileData.feedKey = feedKey;
+  profileData.alias = entry.alias;
+  profileData.fullUrl = entry.fullUrl;
+  profileData.filterKeywords = entry.filterKeywords;
+  const genResultCustom = await generateFeed(feedKey, profileData, store, 'custom');
+  if (genResultCustom && typeof genResultCustom.postCount === 'number') {
+    entry.postCount = genResultCustom.postCount;
+    store.set('feeds', feeds);
+  }
   return entry;
 }
 
@@ -1503,30 +1524,126 @@ ipcMain.handle('toggle-feed-boost', (_e, username, platform) => {
   return feeds[idx];
 });
 
-ipcMain.handle('rename-feed', (_e, username, platform, newAlias) => {
+ipcMain.handle('rename-feed', async (_e, username, platform, newAlias, filterKeywords) => {
   const fs = require('fs');
   const feedDir = require('./rss-generator').getFeedDir();
-  const feeds = store.get('feeds').map((f) => {
+  const currentFeeds = store.get('feeds');
+  let targetFeed = null;
+  let oldFeedKey = '';
+  let newFeedKey = '';
+  let aliasToUse = '';
+
+  // Parse and clean filterKeywords
+  let parsedKeywords = null;
+  if (Array.isArray(filterKeywords)) {
+    parsedKeywords = filterKeywords.map(k => String(k).trim()).filter(Boolean);
+  } else if (typeof filterKeywords === 'string') {
+    parsedKeywords = filterKeywords.split(/[,\n]+/).map(k => k.trim()).filter(Boolean);
+  }
+
+  const feeds = currentFeeds.map((f) => {
     if (f.username === username && (f.platform || 'instagram') === (platform || 'instagram')) {
-      const oldFeedKey = (f.feedKey || f.username).replace(/\//g, '-');
+      aliasToUse = (newAlias && typeof newAlias === 'string' && newAlias.trim()) ? newAlias.trim() : (f.alias || f.username);
+      oldFeedKey = (f.feedKey || f.username).replace(/\//g, '-');
       // Sanitize alias to create a URL-safe feed key
-      const newFeedKey = newAlias.trim()
+      newFeedKey = aliasToUse
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      // Rename existing RSS/Atom files on disk
+        .replace(/^-+|-+$/g, '') || oldFeedKey;
+
       const oldRss = path.join(feedDir, `${oldFeedKey}.rss.xml`);
       const oldAtom = path.join(feedDir, `${oldFeedKey}.atom.xml`);
+      const oldData = path.join(feedDir, `${oldFeedKey}.data.json`);
       const newRss = path.join(feedDir, `${newFeedKey}.rss.xml`);
       const newAtom = path.join(feedDir, `${newFeedKey}.atom.xml`);
-      try { if (fs.existsSync(oldRss)) fs.renameSync(oldRss, newRss); } catch (_) {}
-      try { if (fs.existsSync(oldAtom)) fs.renameSync(oldAtom, newAtom); } catch (_) {}
-      return { ...f, alias: newAlias, feedKey: newFeedKey };
+      const newData = path.join(feedDir, `${newFeedKey}.data.json`);
+
+      if (oldFeedKey !== newFeedKey) {
+        try { if (fs.existsSync(oldRss)) fs.renameSync(oldRss, newRss); } catch (_) {}
+        try { if (fs.existsSync(oldAtom)) fs.renameSync(oldAtom, newAtom); } catch (_) {}
+        try { if (fs.existsSync(oldData)) fs.renameSync(oldData, newData); } catch (_) {}
+      }
+
+      const activeKeywords = parsedKeywords !== null ? parsedKeywords : (f.filterKeywords || []);
+      f = { ...f, alias: aliasToUse, feedKey: newFeedKey, filterKeywords: activeKeywords };
+      targetFeed = f;
+      return f;
     }
     return f;
   });
   store.set('feeds', feeds);
-  return feeds;
+
+  // If target feed was updated, regenerate RSS/Atom feeds with updated alias and filterKeywords
+  if (targetFeed) {
+    try {
+      const dataFile = path.join(feedDir, `${targetFeed.feedKey}.data.json`);
+      let profileData = null;
+
+      if (fs.existsSync(dataFile)) {
+        try {
+          profileData = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+        } catch (_) {}
+      }
+
+      // If data.json does not exist yet, fallback to extracting posts from existing RSS XML
+      if (!profileData || !Array.isArray(profileData.posts) || profileData.posts.length === 0) {
+        const rssFile = path.join(feedDir, `${targetFeed.feedKey}.rss.xml`);
+        if (fs.existsSync(rssFile)) {
+          const rawXml = fs.readFileSync(rssFile, 'utf8');
+          const parsedPosts = [];
+          const itemMatches = rawXml.matchAll(/<item>([\s\S]*?)<\/item>/gi);
+          for (const m of itemMatches) {
+            const itemXml = m[1];
+            const titleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+            const linkMatch = itemXml.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
+            const descMatch = itemXml.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
+            const dateMatch = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
+            const contentMatch = itemXml.match(/<content:encoded>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/content:encoded>/i);
+            parsedPosts.push({
+              title: titleMatch ? titleMatch[1].trim() : '',
+              permalink: linkMatch ? linkMatch[1].trim() : '',
+              description: descMatch ? descMatch[1].trim() : '',
+              caption: descMatch ? descMatch[1].trim() : '',
+              timestamp: dateMatch ? new Date(dateMatch[1]).toISOString() : new Date().toISOString(),
+              content: contentMatch ? contentMatch[1].trim() : ''
+            });
+          }
+          if (parsedPosts.length > 0) {
+            profileData = {
+              username: targetFeed.username,
+              platform: targetFeed.platform || 'instagram',
+              fullName: targetFeed.alias,
+              biography: '',
+              fullUrl: targetFeed.fullUrl || targetFeed.url,
+              posts: parsedPosts
+            };
+          }
+        }
+      }
+
+      if (profileData && Array.isArray(profileData.posts)) {
+        profileData.feedKey = targetFeed.feedKey;
+        profileData.alias = targetFeed.alias;
+        profileData.fullUrl = targetFeed.fullUrl || targetFeed.url;
+        profileData.directExternalLink = Boolean(targetFeed.directExternalLink);
+        profileData.filterKeywords = targetFeed.filterKeywords || [];
+        const result = await generateFeed(targetFeed.feedKey, profileData, store, targetFeed.platform || platform);
+
+        if (result && typeof result.postCount === 'number') {
+          const freshFeeds = store.get('feeds');
+          const idx = freshFeeds.findIndex(f => f.username === username && (f.platform || 'instagram') === (platform || 'instagram'));
+          if (idx !== -1) {
+            freshFeeds[idx].postCount = result.postCount;
+            store.set('feeds', freshFeeds);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[rename-feed] Error regenerating feed with updated filters:', err);
+    }
+  }
+
+  return store.get('feeds');
 });
 
 ipcMain.handle('remove-feed', (_e, username, platform) => {
@@ -1571,7 +1688,8 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
   profileData.alias = storedFeed?.alias;
   profileData.fullUrl = storedFeed?.fullUrl || storedFeed?.url;
   profileData.directExternalLink = Boolean(storedFeed?.directExternalLink);
-  await generateFeed(feedKey, profileData, store, platform);
+  profileData.filterKeywords = storedFeed?.filterKeywords || [];
+  const genResultRef = await generateFeed(feedKey, profileData, store, platform);
 
   // Re-focus main window after hidden scraper window was destroyed
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
@@ -1591,7 +1709,7 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
       return {
         ...f,
         lastChecked: new Date().toISOString(),
-        postCount: profileData.posts.length,
+        postCount: genResultRef?.postCount ?? profileData.posts.length,
         latestPostDate: latestPostDate || f.latestPostDate || null,
       };
     }
@@ -1629,14 +1747,15 @@ ipcMain.handle('refresh-all', async () => {
       profileData.alias = feed.alias;
       profileData.fullUrl = feed.fullUrl || feed.url;
       profileData.directExternalLink = Boolean(feed.directExternalLink);
-      await generateFeed(feedKey, profileData, store, platform);
+      profileData.filterKeywords = feed.filterKeywords || [];
+      const genResultAll = await generateFeed(feedKey, profileData, store, platform);
 
       // Re-read store and update only this entry to avoid overwriting concurrent additions
       const currentFeeds = store.get('feeds');
       const idx = currentFeeds.findIndex(f => f.username === feed.username && (f.platform || 'instagram') === platform);
       if (idx !== -1) {
         currentFeeds[idx].lastChecked = new Date().toISOString();
-        currentFeeds[idx].postCount = profileData.posts.length;
+        currentFeeds[idx].postCount = genResultAll?.postCount ?? profileData.posts.length;
         const realPostsRA = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
         const postsWithTsRA = realPostsRA.length > 0 ? realPostsRA : profileData.posts.filter(p => p.timestamp);
         currentFeeds[idx].latestPostDate = postsWithTsRA.length > 0
@@ -1669,7 +1788,12 @@ ipcMain.handle('toggle-reddit-direct-link', async (_e, username, platform = 'red
     profileData.alias = feed.alias;
     profileData.fullUrl = feed.fullUrl || feed.url;
     profileData.directExternalLink = Boolean(feed.directExternalLink);
-    await generateFeed(feedKey, profileData, store, platform);
+    profileData.filterKeywords = feed.filterKeywords || [];
+    const genResultToggle = await generateFeed(feedKey, profileData, store, platform);
+    if (genResultToggle && typeof genResultToggle.postCount === 'number') {
+      feed.postCount = genResultToggle.postCount;
+      store.set('feeds', feeds);
+    }
   } catch (err) {
     console.error('Failed to regenerate feed on toggle direct link:', err);
   }
