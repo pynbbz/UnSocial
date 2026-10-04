@@ -1177,15 +1177,6 @@ function buildFeedCard(feed) {
         </div>
       </div>
       <div class="feed-actions">
-        ${platform === 'reddit' ? `
-        <button class="btn btn-outline btn-icon-action feed-action-btn btn-direct-link${feed.directExternalLink ? ' is-active' : ''}" title="${feed.directExternalLink ? 'Direct media link active (primary RSS link opens external video directly). Click to toggle.' : 'Direct media link inactive (opens Reddit comments). Click to toggle.'}" aria-label="Toggle direct media link">
-          <span class="btn-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="${feed.directExternalLink ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-          </span>
-        </button>
-        ` : ''}
         <button class="btn btn-outline btn-icon-action feed-action-btn btn-rename" title="Rename" aria-label="Rename feed">
           <span class="btn-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1253,28 +1244,6 @@ function buildFeedCard(feed) {
       copyToClipboard(publicUrl);
       toast('RSS URL copied!', 'success');
     });
-
-    // Toggle direct media link for Reddit feeds
-    const btnDirectLink = card.querySelector('.btn-direct-link');
-    if (btnDirectLink) {
-      btnDirectLink.addEventListener('click', async () => {
-        try {
-          btnDirectLink.disabled = true;
-          const updated = await window.api.toggleRedditDirectLink(feed.username, platform);
-          toast(
-            updated.directExternalLink
-              ? `Direct video link enabled for ${feed.alias || feed.username}`
-              : `Direct video link disabled for ${feed.alias || feed.username}`,
-            'success'
-          );
-          await renderFeeds();
-        } catch (err) {
-          toast(err.message || 'Failed to toggle direct media link', 'error');
-        } finally {
-          btnDirectLink.disabled = false;
-        }
-      });
-    }
 
     card.querySelector('.btn-rename').addEventListener('click', async () => {
       const aliasEl = card.querySelector('.feed-alias-text');
@@ -1531,7 +1500,18 @@ const redditSearchQuery = $('#reddit-search-query');
 const redditSearchSortPills = document.querySelectorAll('#reddit-search-sort-pills .reddit-pill');
 const redditSearchTimeframeGroup = $('#reddit-search-timeframe-group');
 const redditSearchTimeframePills = document.querySelectorAll('#reddit-search-timeframe-pills .reddit-pill');
-const btnRedditAddFlair = $('#btn-reddit-add-flair');
+
+const redditFlairInput = $('#reddit-flair-input');
+const btnAddFlairTag = $('#btn-add-flair-tag');
+const redditFlairsList = $('#reddit-flairs-list');
+const redditFlairModeRow = $('#reddit-flair-mode-row');
+const redditFlairModeRadios = document.querySelectorAll('input[name="reddit-flair-mode"]');
+
+const redditKeywordInput = $('#reddit-keyword-input');
+const btnAddKeywordTag = $('#btn-add-keyword-tag');
+const redditKeywordsList = $('#reddit-keywords-list');
+
+const btnToggleRawQuery = $('#btn-toggle-raw-query');
 
 const redditUserName = $('#reddit-user-name');
 const redditUserSortPills = document.querySelectorAll('#reddit-user-sort-pills .reddit-pill');
@@ -1544,6 +1524,153 @@ const redditModalError = $('#reddit-modal-error');
 
 let activeRedditTab = 'subreddit';
 let userCustomizedAlias = false;
+
+let selectedFlairs = [];
+let selectedKeywords = [];
+let flairMatchMode = 'OR';
+let isManualQueryEditing = false;
+
+function extractTagsFromQuery(queryStr) {
+  if (!queryStr || typeof queryStr !== 'string') return { flairs: [], keywords: [], mode: 'OR' };
+  const flairs = [];
+  const flairRegex = /flair:(?:"([^"]+)"|(\S+))/gi;
+  let match;
+  while ((match = flairRegex.exec(queryStr)) !== null) {
+    const flairVal = match[1] || match[2];
+    if (flairVal && !flairs.includes(flairVal)) {
+      flairs.push(flairVal);
+    }
+  }
+
+  let mode = 'OR';
+  if (flairs.length > 1 && (/\)\s*AND\s*\(|flair:[^)]+\s+AND\s+flair:/i.test(queryStr))) {
+    mode = 'AND';
+  }
+
+  const remaining = queryStr
+    .replace(/\(\s*flair:[^)]+\)/gi, '')
+    .replace(/flair:(?:"[^"]+"|\S+)/gi, '')
+    .replace(/\b(OR|AND)\b/gi, ' ')
+    .replace(/[()]/g, ' ')
+    .trim();
+
+  const keywords = [];
+  if (remaining) {
+    const kwRegex = /"([^"]+)"|(\S+)/g;
+    let kwMatch;
+    while ((kwMatch = kwRegex.exec(remaining)) !== null) {
+      const kw = kwMatch[1] || kwMatch[2];
+      if (kw && !keywords.includes(kw)) {
+        keywords.push(kw);
+      }
+    }
+  }
+  return { flairs, keywords, mode };
+}
+
+function buildSearchQueryString(flairs, keywords, mode = 'OR') {
+  let flairPart = '';
+  if (flairs.length === 1) {
+    flairPart = `flair:"${flairs[0]}"`;
+  } else if (flairs.length > 1) {
+    const joined = flairs.map((f) => `flair:"${f}"`).join(` ${mode} `);
+    flairPart = `(${joined})`;
+  }
+
+  let keywordPart = '';
+  if (keywords.length > 0) {
+    keywordPart = keywords.map((kw) => {
+      if (kw.includes(' ') && !kw.startsWith('"')) {
+        return `"${kw}"`;
+      }
+      return kw;
+    }).join(' ');
+  }
+
+  if (flairPart && keywordPart) {
+    return `${flairPart} ${keywordPart}`;
+  }
+  return flairPart || keywordPart || '';
+}
+
+function rebuildSearchQueryFromTags() {
+  if (!isManualQueryEditing && redditSearchQuery) {
+    redditSearchQuery.value = buildSearchQueryString(selectedFlairs, selectedKeywords, flairMatchMode);
+  }
+  userCustomizedAlias = false;
+  updateRedditBuilder();
+}
+
+function renderFlairTags() {
+  if (!redditFlairsList) return;
+  redditFlairsList.innerHTML = '';
+  if (redditFlairModeRow) {
+    redditFlairModeRow.style.display = selectedFlairs.length > 1 ? 'flex' : 'none';
+  }
+  selectedFlairs.forEach((flair) => {
+    const chip = document.createElement('span');
+    chip.className = 'reddit-tag-chip flair-chip';
+    chip.innerHTML = `<span class="chip-icon">🏷️</span><span class="chip-text">${escapeHtml(flair)}</span><button type="button" class="chip-remove" title="Remove flair" aria-label="Remove flair">✕</button>`;
+    chip.querySelector('.chip-remove')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeFlairTag(flair);
+    });
+    redditFlairsList.appendChild(chip);
+  });
+}
+
+function renderKeywordTags() {
+  if (!redditKeywordsList) return;
+  redditKeywordsList.innerHTML = '';
+  selectedKeywords.forEach((kw) => {
+    const chip = document.createElement('span');
+    chip.className = 'reddit-tag-chip keyword-chip';
+    chip.innerHTML = `<span class="chip-icon">🔍</span><span class="chip-text">${escapeHtml(kw)}</span><button type="button" class="chip-remove" title="Remove keyword" aria-label="Remove keyword">✕</button>`;
+    chip.querySelector('.chip-remove')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeKeywordTag(kw);
+    });
+    redditKeywordsList.appendChild(chip);
+  });
+}
+
+function addFlairTag(flair) {
+  const clean = flair.trim().replace(/^flair:\s*/i, '').replace(/^"|"$/g, '').trim();
+  if (!clean) return;
+  if (!selectedFlairs.some((f) => f.toLowerCase() === clean.toLowerCase())) {
+    selectedFlairs.push(clean);
+    isManualQueryEditing = false;
+    renderFlairTags();
+    rebuildSearchQueryFromTags();
+  }
+  if (redditFlairInput) redditFlairInput.value = '';
+}
+
+function removeFlairTag(flair) {
+  selectedFlairs = selectedFlairs.filter((f) => f !== flair);
+  isManualQueryEditing = false;
+  renderFlairTags();
+  rebuildSearchQueryFromTags();
+}
+
+function addKeywordTag(kw) {
+  const clean = kw.trim().replace(/^"|"$/g, '').trim();
+  if (!clean) return;
+  if (!selectedKeywords.some((k) => k.toLowerCase() === clean.toLowerCase())) {
+    selectedKeywords.push(clean);
+    isManualQueryEditing = false;
+    renderKeywordTags();
+    rebuildSearchQueryFromTags();
+  }
+  if (redditKeywordInput) redditKeywordInput.value = '';
+}
+
+function removeKeywordTag(kw) {
+  selectedKeywords = selectedKeywords.filter((k) => k !== kw);
+  isManualQueryEditing = false;
+  renderKeywordTags();
+  rebuildSearchQueryFromTags();
+}
 
 function cleanSubName(str) {
   if (!str) return '';
@@ -1639,6 +1766,15 @@ async function openRedditModal(initialUrl = '') {
   userCustomizedAlias = false;
   if (redditDirectLink) redditDirectLink.checked = false;
 
+  selectedFlairs = [];
+  selectedKeywords = [];
+  flairMatchMode = 'OR';
+  isManualQueryEditing = false;
+  if (redditFlairInput) redditFlairInput.value = '';
+  if (redditKeywordInput) redditKeywordInput.value = '';
+  redditFlairModeRadios.forEach((r) => {
+    r.checked = (r.value === 'OR');
+  });
 
   const urlToParse = initialUrl || (inputUrl ? inputUrl.value.trim() : '');
   if (urlToParse && (urlToParse.includes('reddit.com') || /^r\/|^u\//i.test(urlToParse))) {
@@ -1653,7 +1789,20 @@ async function openRedditModal(initialUrl = '') {
         } else if (parsed.type === 'search') {
           switchRedditTab('search');
           if (redditSearchSub) redditSearchSub.value = parsed.targetName || '';
-          if (redditSearchQuery) redditSearchQuery.value = parsed.query || '';
+          if (parsed.query) {
+            if (redditSearchQuery) redditSearchQuery.value = parsed.query;
+            const extracted = extractTagsFromQuery(parsed.query);
+            if (extracted.flairs.length > 0 || extracted.keywords.length > 0) {
+              selectedFlairs = extracted.flairs;
+              selectedKeywords = extracted.keywords;
+              flairMatchMode = extracted.mode;
+              redditFlairModeRadios.forEach((r) => {
+                r.checked = (r.value === flairMatchMode);
+              });
+            }
+          } else {
+            if (redditSearchQuery) redditSearchQuery.value = '';
+          }
           if (parsed.sort) setActivePill(redditSearchSortPills, 'sort', parsed.sort);
           if (parsed.timeframe) setActivePill(redditSearchTimeframePills, 'time', parsed.timeframe);
         } else if (parsed.type === 'user') {
@@ -1676,6 +1825,8 @@ async function openRedditModal(initialUrl = '') {
     }
   }
 
+  renderFlairTags();
+  renderKeywordTags();
   updateRedditBuilder();
   redditModalOverlay.style.display = 'flex';
 
@@ -1756,13 +1907,59 @@ function setupRedditModal() {
     updateRedditBuilder();
   });
   redditSearchQuery?.addEventListener('input', () => {
+    isManualQueryEditing = true;
     userCustomizedAlias = false;
     updateRedditBuilder();
   });
+
+  // Flair input events
+  redditFlairInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addFlairTag(redditFlairInput.value);
+    }
+  });
+  btnAddFlairTag?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (redditFlairInput) addFlairTag(redditFlairInput.value);
+  });
+
+  // Keyword input events
+  redditKeywordInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addKeywordTag(redditKeywordInput.value);
+    }
+  });
+  btnAddKeywordTag?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (redditKeywordInput) addKeywordTag(redditKeywordInput.value);
+  });
+
+  // Flair mode radios (OR vs AND)
+  redditFlairModeRadios.forEach((radio) => {
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        flairMatchMode = radio.value;
+        isManualQueryEditing = false;
+        rebuildSearchQueryFromTags();
+      }
+    });
+  });
+
+  // Toggle raw query focus
+  btnToggleRawQuery?.addEventListener('click', () => {
+    if (redditSearchQuery) {
+      redditSearchQuery.focus();
+      redditSearchQuery.select();
+    }
+  });
+
   redditUserName?.addEventListener('input', () => {
     userCustomizedAlias = false;
     updateRedditBuilder();
   });
+
   redditPasteUrl?.addEventListener('input', async () => {
     const val = redditPasteUrl.value.trim();
     if (val) {
@@ -1778,17 +1975,6 @@ function setupRedditModal() {
 
   redditCustomAlias?.addEventListener('input', () => {
     userCustomizedAlias = (redditCustomAlias.value.trim().length > 0);
-  });
-
-  btnRedditAddFlair?.addEventListener('click', () => {
-    if (!redditSearchQuery) return;
-    const cur = (redditSearchQuery.value || '').trim();
-    if (!cur.includes('flair:')) {
-      redditSearchQuery.value = cur ? `${cur} flair:"Discussion"` : 'flair:"Discussion"';
-    }
-    userCustomizedAlias = false;
-    updateRedditBuilder();
-    redditSearchQuery.focus();
   });
 
   // Submit button

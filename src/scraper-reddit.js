@@ -56,6 +56,8 @@ function loadAndExtract(win, targetUrl) {
 
     let handled = false;
     win.webContents.on('did-finish-load', async () => {
+      const curUrl = win.webContents.getURL();
+      if (!curUrl || curUrl === 'about:blank') return;
       if (handled) return;
       handled = true;
 
@@ -75,11 +77,57 @@ function loadAndExtract(win, targetUrl) {
               var posts = [];
               var seenIds = new Set();
 
+              function isRedditAd(el) {
+                if (!el) return false;
+                var tag = (el.tagName || '').toUpperCase();
+                if (tag === 'SHREDDIT-AD-POST' || tag === 'SHREDDIT-AD' || tag === 'SHREDDIT-PROMOTED-POST') {
+                  return true;
+                }
+                if (el.hasAttribute('promoted') || el.hasAttribute('is-promoted') || el.getAttribute('is-promoted') === 'true') {
+                  return true;
+                }
+                if (el.hasAttribute('data-promoted') || el.getAttribute('data-promoted') === 'true') {
+                  return true;
+                }
+                if (el.classList && (el.classList.contains('promotedlink') || el.classList.contains('promoted'))) {
+                  return true;
+                }
+                if (el.getAttribute('post-type') === 'promoted' || el.getAttribute('ad-type') || el.getAttribute('adtype')) {
+                  return true;
+                }
+                if (el.getAttribute('domain') === 'ads.reddit.com') {
+                  return true;
+                }
+                if (el.hasAttribute('data-ad-click-location') || el.hasAttribute('data-adclicklocation') || el.hasAttribute('data-adclicktracker')) {
+                  return true;
+                }
+                if (el.querySelector('[slot="promoted-badge"], .promoted-name-container, .advertiser-name, [data-testid*="promoted"], [data-ad-click-location], [data-adclicklocation], [data-adclicktracker], a[href*="alb.reddit.com"], a[href*="ads.reddit.com"]')) {
+                  return true;
+                }
+                if (el.innerText && /^\\s*advertisement:/i.test(el.innerText)) {
+                  return true;
+                }
+                var permalink = el.getAttribute('permalink') || '';
+                var contentHref = el.getAttribute('content-href') || '';
+                if (permalink.includes('ads.reddit.com') || contentHref.includes('ads.reddit.com') || contentHref.includes('alb.reddit.com')) {
+                  return true;
+                }
+                return false;
+              }
+
+              // ── 0. Remove Reddit Sponsored / Promoted Ad Elements ──
+              var adElements = document.querySelectorAll('shreddit-ad-post, shreddit-ad, shreddit-promoted-post, .promotedlink, [data-promoted="true"], [data-adclicklocation], [data-ad-click-location], [data-adclicktracker]');
+              adElements.forEach(function(ad) {
+                try { ad.remove(); } catch (_) {}
+              });
+
               // ── 1. Shreddit Posts (Modern Subreddit & User Pages) ──
               var shredditPosts = document.querySelectorAll('shreddit-post');
               if (shredditPosts.length > 0) {
                 shredditPosts.forEach(function(p) {
                   try {
+                    if (isRedditAd(p)) return;
+
                     var id = p.getAttribute('id') || p.id || '';
                     if (!id) {
                       var perm = p.getAttribute('permalink') || '';
@@ -147,6 +195,10 @@ function loadAndExtract(win, targetUrl) {
                 var commentLinks = document.querySelectorAll('a[href*="/comments/"]');
                 commentLinks.forEach(function(a) {
                   try {
+                    if (a.closest('shreddit-ad-post, shreddit-ad, shreddit-promoted-post, .promotedlink, [data-promoted], [data-adclicklocation], [data-ad-click-location], [data-adclicktracker], [data-testid*="promoted"]')) {
+                      return;
+                    }
+
                     var href = a.getAttribute('href') || a.href;
                     var m = href.match(/\\/comments\\/([a-zA-Z0-9]+)/);
                     if (!m) return;
@@ -159,6 +211,7 @@ function loadAndExtract(win, targetUrl) {
 
                     // Find enclosing article/card if possible
                     var article = a.closest('article, [data-testid="search-post-unit"], [data-testid="post-container"]') || a.parentElement;
+                    if (article && isRedditAd(article)) return;
                     if (!title && article) {
                       var heading = article.querySelector('h2, h3, a[href*="/comments/"]');
                       if (heading) title = heading.innerText.trim();
@@ -258,7 +311,25 @@ function loadAndExtract(win, targetUrl) {
       }
     });
 
+    win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      // Ignore ERR_ABORTED (-3) and ERR_FAILED (-2) as they happen on redirects and intermediate frames
+      if (errorCode === -3 || errorCode === -2 || errorCode === 'ERR_ABORTED' || errorCode === 'ERR_FAILED' || isMainFrame === false) return;
+      if (handled) return;
+      handled = true;
+      clearTimeout(timeout);
+      reject(new Error(`Failed to load Reddit page: ${errorDescription} (${errorCode})`));
+    });
+
     win.loadURL(targetUrl).catch((err) => {
+      // Ignore ERR_ABORTED (-3) and ERR_FAILED (-2): Chromium cancels/fails the initial navigation request when redirects occur
+      if (err && (
+        err.code === 'ERR_ABORTED' || err.message?.includes('ERR_ABORTED') || err.errno === -3 ||
+        err.code === 'ERR_FAILED' || err.message?.includes('ERR_FAILED') || err.errno === -2
+      )) {
+        return;
+      }
+      if (handled) return;
+      handled = true;
       clearTimeout(timeout);
       reject(err);
     });

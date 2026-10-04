@@ -2048,7 +2048,7 @@ function parseRedditInput(input) {
     const t = u.searchParams.get('t') || '';
 
     const alias = subName && subName !== 'all' ? `r/${subName}` : 'Reddit';
-    const qSlug = q.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+    const qSlug = q.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 35);
     const username = `r-${subName}-search-${qSlug || 'query'}-${sort}${t ? '-' + t : ''}`;
 
     return {

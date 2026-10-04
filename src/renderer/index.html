@@ -466,19 +466,53 @@
           <!-- Search & Flair Section -->
           <div class="reddit-mode-view" id="reddit-view-search" style="display:none;">
             <div class="reddit-form-group">
-              <label for="reddit-search-sub">Subreddit (optional for global):</label>
+              <label for="reddit-search-sub">Subreddit (optional for global search):</label>
               <div class="input-with-prefix">
                 <span class="input-prefix">r/</span>
-                <input type="text" id="reddit-search-sub" class="reddit-input" placeholder="AndroidTV" autocomplete="off" />
+                <input type="text" id="reddit-search-sub" class="reddit-input" placeholder="Android" autocomplete="off" />
               </div>
             </div>
 
+            <!-- Multi-Flair Filter -->
             <div class="reddit-form-group">
-              <label for="reddit-search-query">Search Keyword or Flair Query:</label>
-              <input type="text" id="reddit-search-query" class="reddit-input" placeholder='e.g. flair:"app" or release' autocomplete="off" />
+              <label for="reddit-flair-input">Filter by Flairs (add multiple):</label>
+              <div class="reddit-tag-input-row">
+                <input type="text" id="reddit-flair-input" class="reddit-input" placeholder='Type flair (e.g. How to, Project Share) and press Enter' autocomplete="off" />
+                <button type="button" class="btn btn-outline btn-sm btn-tag-add" id="btn-add-flair-tag">+ Add Flair</button>
+              </div>
+              <div class="reddit-tags-list" id="reddit-flairs-list"></div>
+              <div class="reddit-flair-mode-row" id="reddit-flair-mode-row" style="display:none;">
+                <span class="subtle">Match flairs:</span>
+                <label class="reddit-inline-radio">
+                  <input type="radio" name="reddit-flair-mode" value="OR" checked />
+                  <span>Any of these (OR)</span>
+                </label>
+                <label class="reddit-inline-radio">
+                  <input type="radio" name="reddit-flair-mode" value="AND" />
+                  <span>All of these (AND)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Search Keywords Section -->
+            <div class="reddit-form-group">
+              <label for="reddit-keyword-input">Search Keywords (optional):</label>
+              <div class="reddit-tag-input-row">
+                <input type="text" id="reddit-keyword-input" class="reddit-input" placeholder='Type keyword/phrase and press Enter' autocomplete="off" />
+                <button type="button" class="btn btn-outline btn-sm btn-tag-add" id="btn-add-keyword-tag">+ Add Keyword</button>
+              </div>
+              <div class="reddit-tags-list" id="reddit-keywords-list"></div>
+            </div>
+
+            <!-- Combined Raw Search Query -->
+            <div class="reddit-form-group">
+              <div class="reddit-query-header">
+                <label for="reddit-search-query">Combined Search Query:</label>
+                <button type="button" class="reddit-query-toggle-btn" id="btn-toggle-raw-query">Edit raw syntax</button>
+              </div>
+              <input type="text" id="reddit-search-query" class="reddit-input" placeholder='(flair:"How to" OR flair:"Project Share")' autocomplete="off" />
               <div class="reddit-input-hints">
-                <button type="button" class="reddit-hint-btn" id="btn-reddit-add-flair">+ Add Flair syntax</button>
-                <span class="subtle">Matches posts with specific flair tags or terms</span>
+                <span class="subtle">Flairs and keywords update this query automatically, or you can edit it directly.</span>
               </div>
             </div>
 
