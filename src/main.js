@@ -86,6 +86,7 @@ const { scrapeTwitterProfile } = require('./scraper-twitter');
 const { scrapeFacebookProfile } = require('./scraper-facebook');
 const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
+const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
@@ -392,6 +393,7 @@ async function refreshOldestFeed() {
     else if (platform === 'facebook') profileData = await withTimeout(scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'linkedin') profileData = await withTimeout(scrapeLinkedInProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'txt') profileData = await withTimeout(scrapeTxtFile(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'reddit') profileData = await withTimeout(scrapeReddit(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
@@ -775,6 +777,7 @@ function updateTrayIcon(healthy) {
 let twitterLoginWindow = null;
 let facebookLoginWindow = null;
 let linkedinLoginWindow = null;
+let redditLoginWindow = null;
 
 function openLoginWindow() {
   if (loginWindow) {
@@ -993,6 +996,55 @@ function openLinkedInLoginWindow() {
   });
 }
 
+// ── Reddit Login Window ───────────────────────────────────────────────────
+
+function openRedditLoginWindow() {
+  if (redditLoginWindow) {
+    redditLoginWindow.focus();
+    return;
+  }
+
+  redditLoginWindow = new BrowserWindow({
+    width: 520,
+    height: 720,
+    parent: mainWindow,
+    modal: false,
+    title: 'Login to Reddit',
+    webPreferences: {
+      partition: undefined,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  redditLoginWindow.setMenuBarVisibility(false);
+  const chromeUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  redditLoginWindow.webContents.session.setUserAgent(chromeUA);
+  redditLoginWindow.webContents.setUserAgent(chromeUA);
+
+  redditLoginWindow.loadURL('https://www.reddit.com/login/');
+
+  const checkClose = async (url) => {
+    try {
+      const cookies = await session.defaultSession.cookies.get({ domain: 'reddit.com' });
+      const authCookie = cookies.find(c => (c.name === 'reddit_session' || c.name === 'token' || c.name === 'session') && c.value.length > 0);
+      if (authCookie && !url.includes('/login') && !url.includes('/register') && !url.includes('/password')) {
+        mainWindow.webContents.send('login-status', { platform: 'reddit', loggedIn: true });
+        if (redditLoginWindow && !redditLoginWindow.isDestroyed()) redditLoginWindow.close();
+      }
+    } catch (_) {}
+  };
+
+  redditLoginWindow.webContents.on('did-navigate', (_e, url) => {
+    checkClose(url);
+  });
+
+  redditLoginWindow.on('closed', () => {
+    redditLoginWindow = null;
+    checkRedditLoginStatus();
+  });
+}
+
 // ── Login Status Checks ────────────────────────────────────────────────────
 
 async function checkLoginStatus() {
@@ -1090,6 +1142,28 @@ async function checkLinkedInLoginStatus() {
   }
 }
 
+async function checkRedditLoginStatus() {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ domain: 'reddit.com' });
+    const authCookie = cookies.find(c => (c.name === 'reddit_session' || c.name === 'token' || c.name === 'session') && c.value.length > 0);
+    const loggedIn = !!authCookie;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('login-status', { platform: 'reddit', loggedIn });
+    }
+    if (!loggedIn) {
+      const feeds = store.get('feeds');
+      if (feeds.some(f => f.platform === 'reddit')) {
+        addNotification('warning', 'Reddit session expired — please log in again');
+      }
+    } else {
+      resolveNotificationsBySubstring('Reddit session');
+    }
+    return loggedIn;
+  } catch {
+    return false;
+  }
+}
+
 // ── IPC Handlers ───────────────────────────────────────────────────────────
 
 // Instagram auth
@@ -1133,6 +1207,20 @@ ipcMain.handle('logout-linkedin', async () => {
   mainWindow.webContents.send('login-status', { platform: 'linkedin', loggedIn: false });
 });
 
+// Reddit auth
+ipcMain.handle('open-reddit-login', () => openRedditLoginWindow());
+ipcMain.handle('check-reddit-login', () => checkRedditLoginStatus());
+ipcMain.handle('logout-reddit', async () => {
+  await session.defaultSession.clearStorageData({
+    origins: ['https://www.reddit.com', 'https://reddit.com'],
+  });
+  mainWindow.webContents.send('login-status', { platform: 'reddit', loggedIn: false });
+});
+
+ipcMain.handle('parse-reddit-url', (_e, input) => {
+  return parseRedditInput(input);
+});
+
 // Force reset: clear ALL cookies + storage for a platform (nuclear option)
 ipcMain.handle('force-reset-platform', async (_e, platform) => {
   const domainMap = {
@@ -1140,6 +1228,7 @@ ipcMain.handle('force-reset-platform', async (_e, platform) => {
     twitter: ['https://x.com', 'https://twitter.com', 'https://api.twitter.com'],
     facebook: ['https://www.facebook.com', 'https://facebook.com'],
     linkedin: ['https://www.linkedin.com', 'https://linkedin.com'],
+    reddit: ['https://www.reddit.com', 'https://reddit.com'],
   };
   const origins = domainMap[platform];
   if (!origins) return;
@@ -1155,6 +1244,7 @@ ipcMain.handle('force-reset-platform', async (_e, platform) => {
     twitter: ['x.com', 'twitter.com'],
     facebook: ['facebook.com'],
     linkedin: ['linkedin.com'],
+    reddit: ['reddit.com'],
   };
   for (const domain of (domainParts[platform] || [])) {
     const cookies = await session.defaultSession.cookies.get({ domain });
@@ -1172,9 +1262,33 @@ ipcMain.handle('get-feeds', () => {
   return store.get('feeds');
 });
 
-ipcMain.handle('add-feed', async (_e, url) => {
-  const parsed = parseProfileInput(url);
-  if (!parsed) throw new Error('Invalid URL or username. Supported: Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
+ipcMain.handle('add-feed', async (_e, input) => {
+  let parsed;
+  if (typeof input === 'object' && input !== null) {
+    const rawUrl = (input.targetUrl || input.fullUrl || input.url || '').trim();
+    if (input.platform === 'reddit' || rawUrl.includes('reddit.com') || /^\/??(?:r|u|user)\//i.test(rawUrl)) {
+      const fromUrl = parseRedditInput(rawUrl) || {};
+      const username = input.username || fromUrl.username || 'r-reddit-feed';
+      const fullUrl = rawUrl || fromUrl.fullUrl || '';
+      parsed = {
+        ...fromUrl,
+        ...input,
+        platform: 'reddit',
+        username,
+        fullUrl,
+        alias: input.alias || fromUrl.alias || username,
+        feedKey: input.feedKey || fromUrl.username || username.replace(/[^a-zA-Z0-9_-]/g, '-'),
+      };
+    } else if (input.platform && input.username) {
+      parsed = input;
+    } else {
+      parsed = parseProfileInput(rawUrl || input);
+    }
+  } else {
+    parsed = parseProfileInput(input);
+  }
+
+  if (!parsed) throw new Error('Invalid URL or username. Supported: Reddit, Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
 
   const { username, platform } = parsed;
 
@@ -1187,7 +1301,7 @@ ipcMain.handle('add-feed', async (_e, url) => {
 
   // Use platform+username as unique key so same username on different platforms is allowed
   if (feeds.find((f) => f.username === username && f.platform === platform)) {
-    throw new Error(`Already tracking @${username} on ${platform}`);
+    throw new Error(`Already tracking ${parsed.alias || username} on ${platform}`);
   }
 
   let profileData;
@@ -1199,6 +1313,8 @@ ipcMain.handle('add-feed', async (_e, url) => {
     profileData = await scrapeLinkedInProfile(username);
   } else if (platform === 'txt') {
     profileData = await scrapeTxtFile(parsed.fullUrl);
+  } else if (platform === 'reddit') {
+    profileData = await scrapeReddit(parsed.fullUrl);
   } else {
     profileData = await scrapeInstagramProfile(username);
   }
@@ -1207,25 +1323,28 @@ ipcMain.handle('add-feed', async (_e, url) => {
     throw new Error(
       platform === 'txt'
         ? `Found no entries in ${parsed.fullUrl}. Make sure the file is a valid changelog.`
-        : `Found no posts for @${username} on ${platform}. ` +
-          'Make sure you are logged in and the profile is accessible.'
+        : platform === 'reddit'
+          ? `Found no posts for ${parsed.alias || username} on Reddit. Make sure the subreddit exists or check your search/sort options.`
+          : `Found no posts for @${username} on ${platform}. ` +
+            'Make sure you are logged in and the profile is accessible.'
     );
   }
 
   // Re-focus main window after hidden scraper window was destroyed
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
 
-  const isOrg = username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/');
+  const isOrg = Boolean(username && typeof username === 'string' && (username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/')));
   const profileUrls = {
     twitter: `https://x.com/${username}`,
     facebook: `https://www.facebook.com/${username}`,
     instagram: `https://www.instagram.com/${username}/`,
     linkedin: isOrg ? `https://www.linkedin.com/${username}` : `https://www.linkedin.com/in/${username}`,
-    txt: parsed.fullUrl || url,
+    txt: parsed.fullUrl || (typeof input === 'string' ? input : ''),
+    reddit: parsed.fullUrl || (typeof input === 'string' ? input : ''),
   };
 
-  // For group/event identifiers with slashes, use a sanitized key for the feed filename
-  const feedKey = username.replace(/\//g, '-');
+  // Clean feedKey for safe filenames and URL routes
+  const feedKey = (parsed.feedKey || username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
   const realPostsAdd = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
   const postsWithTsAdd = realPostsAdd.length > 0 ? realPostsAdd : profileData.posts.filter(p => p.timestamp);
@@ -1239,8 +1358,8 @@ ipcMain.handle('add-feed', async (_e, url) => {
     feedKey,
     platform,
     subTab: parsed.subTab || null,
-    fullUrl: parsed.fullUrl || (platform === 'txt' ? url : null),
-    alias: username,
+    fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' ? (typeof input === 'string' ? input : parsed.fullUrl) : null),
+    alias: parsed.alias || username,
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
     latestPostDate,
@@ -1249,6 +1368,9 @@ ipcMain.handle('add-feed', async (_e, url) => {
   feeds.push(entry);
   store.set('feeds', feeds);
 
+  profileData.feedKey = feedKey;
+  profileData.alias = entry.alias;
+  profileData.fullUrl = entry.fullUrl;
   await generateFeed(feedKey, profileData, store, platform);
   return entry;
 });
@@ -1423,6 +1545,9 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
     } else if (platform === 'txt') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'txt');
       profileData = await scrapeTxtFile(feedEntry?.fullUrl || feedEntry?.url);
+    } else if (platform === 'reddit') {
+      const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'reddit');
+      profileData = await scrapeReddit(feedEntry?.fullUrl || feedEntry?.url);
     } else if (platform === 'custom') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'custom');
       profileData = await scrapeCustomSiteHeadless(feedEntry?.fullUrl, feedEntry?.selector, feedEntry?.alias || username, feedEntry?.scrollSelector, feedEntry?.scrollCount);
@@ -1435,7 +1560,7 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
   }
 
   const storedFeed = store.get('feeds').find((f) => f.username === username && (f.platform || 'instagram') === platform);
-  const feedKey = (storedFeed?.feedKey || username).replace(/\//g, '-');
+  const feedKey = (storedFeed?.feedKey || username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   await generateFeed(feedKey, profileData, store, platform);
 
   // Re-focus main window after hidden scraper window was destroyed
@@ -1482,12 +1607,15 @@ ipcMain.handle('refresh-all', async () => {
         profileData = await scrapeLinkedInProfile(feed.username);
       } else if (platform === 'txt') {
         profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
+      } else if (platform === 'reddit') {
+        profileData = await scrapeReddit(feed.fullUrl || feed.url);
       } else if (platform === 'custom') {
         profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
       } else {
         profileData = await scrapeInstagramProfile(feed.username);
       }
-      await generateFeed((feed.feedKey || feed.username).replace(/\//g, '-'), profileData, store, platform);
+      const feedKey = (feed.feedKey || feed.username).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      await generateFeed(feedKey, profileData, store, platform);
 
       // Re-read store and update only this entry to avoid overwriting concurrent additions
       const currentFeeds = store.get('feeds');
@@ -1821,6 +1949,10 @@ function parseProfileInput(input) {
     return { username: fileName, platform: 'txt', fullUrl };
   }
 
+  // Reddit URL or shorthand
+  const redditParsed = parseRedditInput(input);
+  if (redditParsed) return redditParsed;
+
   // Bare @username or username — default to Instagram
   const bare = input.replace(/^@/, '');
   if (/^[a-zA-Z0-9._]{1,30}$/.test(bare)) return { username: bare, platform: 'instagram' };
@@ -1840,6 +1972,107 @@ function parseProfileInput(input) {
       siteName = 'custom-feed';
     }
     return { username: siteName, platform: 'custom', fullUrl };
+  }
+
+  return null;
+}
+
+function parseRedditInput(input) {
+  if (typeof input !== 'string') return null;
+  input = input.trim();
+
+  // Strip .rss extension if present (e.g. .rss, top.rss, search.rss)
+  let clean = input.replace(/\.rss(?=[?#]|$)/i, '');
+  clean = clean.replace(/\/\.rss(?=[?#]|$)/i, '/');
+
+  // Match reddit URLs or shorthand r/ or u/
+  const isRedditDomain = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?reddit\.com/i.test(clean);
+  const isRedditShorthand = /^\/??(?:r|u|user)\/[a-zA-Z0-9_+]+/i.test(clean);
+
+  if (!isRedditDomain && !isRedditShorthand) return null;
+
+  let fullUrl = clean;
+  if (!fullUrl.startsWith('http')) {
+    fullUrl = 'https://www.reddit.com/' + fullUrl.replace(/^\/+/, '');
+  }
+
+  let u;
+  try {
+    u = new URL(fullUrl);
+  } catch (_) {
+    return null;
+  }
+
+  // 1. Search in subreddit or global search: /r/subname/search or /search
+  const searchMatch = u.pathname.match(/(?:\/r\/([a-zA-Z0-9_+]+))?\/search\/?/i);
+  if (searchMatch) {
+    const subName = searchMatch[1] || 'all';
+    const q = u.searchParams.get('q') || '';
+    const sort = u.searchParams.get('sort') || 'new';
+    const t = u.searchParams.get('t') || '';
+
+    let alias = `r/${subName}`;
+    if (q) {
+      const shortQ = q.length > 25 ? q.slice(0, 24) + '…' : q;
+      alias += ` (search: ${shortQ})`;
+    } else {
+      alias += ` (search)`;
+    }
+
+    const qSlug = q.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+    const username = `r-${subName}-search-${qSlug || 'query'}-${sort}${t ? '-' + t : ''}`;
+
+    return {
+      platform: 'reddit',
+      redditType: 'search',
+      subName,
+      query: q,
+      sort,
+      timeframe: t,
+      username,
+      alias,
+      fullUrl: u.toString(),
+    };
+  }
+
+  // 2. Subreddit posts: /r/subname/(top|new|hot|rising|controversial)?
+  const subMatch = u.pathname.match(/\/r\/([a-zA-Z0-9_+]+)(?:\/(top|new|hot|rising|controversial))?/i);
+  if (subMatch) {
+    const subName = subMatch[1];
+    const sort = subMatch[2] ? subMatch[2].toLowerCase() : (u.pathname.includes('/top') ? 'top' : 'hot');
+    const t = u.searchParams.get('t') || '';
+
+    let alias = `r/${subName}`;
+    let username = `r-${subName}`;
+    if (sort !== 'hot' || t) {
+      alias += ` (${sort}${t ? ' ' + t : ''})`;
+      username += `-${sort}${t ? '-' + t : ''}`;
+    }
+
+    return {
+      platform: 'reddit',
+      redditType: 'subreddit',
+      subName,
+      sort,
+      timeframe: t,
+      username,
+      alias,
+      fullUrl: u.toString(),
+    };
+  }
+
+  // 3. User posts: /(?:user|u)/username(/submitted)?
+  const userMatch = u.pathname.match(/\/(?:user|u)\/([a-zA-Z0-9_-]+)/i);
+  if (userMatch) {
+    const userName = userMatch[1];
+    return {
+      platform: 'reddit',
+      redditType: 'user',
+      subName: `u/${userName}`,
+      username: `u-${userName}-submitted`,
+      alias: `u/${userName} (submitted)`,
+      fullUrl: u.toString(),
+    };
   }
 
   return null;

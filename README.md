@@ -1,6 +1,6 @@
 # UnSocial
 
-**Social media → RSS feed converter** — a desktop app for Windows, macOS (Apple Silicon), and Linux that turns Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
+**Social media → RSS feed converter** — a desktop app for Windows, macOS (Apple Silicon), and Linux that turns Reddit, Instagram, Twitter/X, Facebook, and LinkedIn profiles into standard RSS/Atom feeds you can subscribe to in any feed reader.
 
 ![Showcase](Showcase.png)
 
@@ -9,7 +9,8 @@
 
 ## Features
 
-- **Multi-platform** — Supports Instagram, Twitter/X, Facebook (pages, groups, events), and LinkedIn (profiles, companies)
+- **Multi-platform** — Supports Reddit (subreddits, sort/timeframes, search & flair queries, user posts), Instagram, Twitter/X, Facebook (pages, groups, events), and LinkedIn (profiles, companies)
+- **Reddit Feed Builder** — Dedicated modal builder with sort pills (hot, top [day/week/month/year/all], new, rising), search & flair filters, and user submission feeds with custom aliases
 - **Local RSS server** — Serves feeds on `http://localhost:3845/feed/<username>` — works with any RSS reader
 - **Public access via Cloudflare Tunnel or Tailscale Funnel** — Optionally expose feeds to the internet through your own domain (Cloudflare) or an auto-assigned `*.ts.net` hostname (Tailscale)
 - **Auto-refresh** — Smart staggered refresh keeps feeds up-to-date without hammering platforms

@@ -7,6 +7,7 @@ const igStatusEl = $('#ig-login-status');
 const twStatusEl = $('#tw-login-status');
 const fbStatusEl = $('#fb-login-status');
 const liStatusEl = $('#li-login-status');
+const rdStatusEl = $('#rd-login-status');
 
 const inputUrl = $('#input-url');
 const btnAdd = $('#btn-add');
@@ -70,6 +71,7 @@ let igLoggedIn = false;
 let twLoggedIn = false;
 let fbLoggedIn = false;
 let liLoggedIn = false;
+let rdLoggedIn = false;
 let tunnelDomain = '';
 let tunnelRunning = false;
 let feedToken = '';
@@ -134,6 +136,10 @@ let activeGroup = null;
   await window.api.checkTwitterLogin();
   await window.api.checkFacebookLogin();
   await window.api.checkLinkedInLogin();
+  await window.api.checkRedditLogin();
+
+  // Setup Reddit modal
+  setupRedditModal();
 
   // Load feeds
   await renderFeeds();
@@ -151,6 +157,9 @@ window.api.onLoginStatus(({ platform, loggedIn }) => {
   } else if (platform === 'linkedin') {
     liLoggedIn = loggedIn;
     updatePlatformLoginUI('linkedin', loggedIn);
+  } else if (platform === 'reddit') {
+    rdLoggedIn = loggedIn;
+    updatePlatformLoginUI('reddit', loggedIn);
   } else {
     igLoggedIn = loggedIn;
     updatePlatformLoginUI('instagram', loggedIn);
@@ -335,6 +344,9 @@ function updatePlatformLoginUI(platform, loggedIn) {
   } else if (platform === 'linkedin') {
     badgeEl = liStatusEl;
     reconnectEl = $('#li-reconnect');
+  } else if (platform === 'reddit') {
+    badgeEl = rdStatusEl;
+    reconnectEl = $('#rd-reconnect');
   } else {
     badgeEl = igStatusEl;
     reconnectEl = $('#ig-reconnect');
@@ -383,6 +395,14 @@ liStatusEl.addEventListener('click', () => {
   }
 });
 
+rdStatusEl?.addEventListener('click', () => {
+  if (rdLoggedIn) {
+    if (confirm('Log out of Reddit?')) window.api.logoutReddit();
+  } else {
+    window.api.openRedditLogin();
+  }
+});
+
 // Click reconnect buttons directly: open login window without logging out
 $('#ig-reconnect')?.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -400,6 +420,10 @@ $('#li-reconnect')?.addEventListener('click', (e) => {
   e.stopPropagation();
   window.api.openLinkedInLogin();
 });
+$('#rd-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openRedditLogin();
+});
 
 // Right-click platform badge: force reset (clears all cookies & storage)
 for (const [el, platform, name] of [
@@ -407,7 +431,9 @@ for (const [el, platform, name] of [
   [twStatusEl, 'twitter', 'Twitter / X'],
   [fbStatusEl, 'facebook', 'Facebook'],
   [liStatusEl, 'linkedin', 'LinkedIn'],
+  [rdStatusEl, 'reddit', 'Reddit'],
 ]) {
+  if (!el) continue;
   el.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     if (confirm(`Force reset ${name}? This will clear ALL cookies and stored data for ${name}. You will need to log in again.`)) {
@@ -974,10 +1000,11 @@ async function renderFeeds() {
 
   // Group feeds by category
   const groups = {};
-  const groupOrder = ['Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
+  const groupOrder = ['Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
   for (const feed of filteredFeeds) {
     const platform = feed.platform || 'instagram';
-    const category = platform === 'twitter' ? 'Twitter' :
+    const category = platform === 'reddit' ? 'Reddit' :
+      platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
       platform === 'linkedin' ? 'LinkedIn' :
       platform === 'txt' ? 'Text' :
@@ -1082,7 +1109,8 @@ function buildFeedCard(feed) {
     const platformLoggedOut = (platform === 'instagram' && !igLoggedIn) ||
                               (platform === 'twitter' && !twLoggedIn) ||
                               (platform === 'facebook' && !fbLoggedIn) ||
-                              (platform === 'linkedin' && !liLoggedIn);
+                              (platform === 'linkedin' && !liLoggedIn) ||
+                              (platform === 'reddit' && !rdLoggedIn);
     // txt and custom feeds never require login, so only mark stale for actual staleness/errors
     if (isStale || hasError || (platformLoggedOut && platform !== 'txt' && platform !== 'custom')) {
       card.classList.add('feed-stale');
@@ -1091,20 +1119,23 @@ function buildFeedCard(feed) {
     const customSourceUrl = feed.fullUrl || feed.url || '';
     const customFavicon = getDomainFaviconUrl(customSourceUrl);
     const customFallbackLogo = 'https://cdn-icons-png.flaticon.com/512/1006/1006771.png';
-    const platformLogo = platform === 'twitter'
-      ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-      : platform === 'facebook'
-        ? 'https://www.facebook.com/images/fb_icon_325x325.png'
-        : platform === 'linkedin'
-          ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
-          : platform === 'txt'
-            ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
-            : platform === 'custom'
-              ? (customFavicon || customFallbackLogo)
-              : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
+    const platformLogo = platform === 'reddit'
+      ? 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png'
+      : platform === 'twitter'
+        ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+        : platform === 'facebook'
+          ? 'https://www.facebook.com/images/fb_icon_325x325.png'
+          : platform === 'linkedin'
+            ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
+            : platform === 'txt'
+              ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
+              : platform === 'custom'
+                ? (customFavicon || customFallbackLogo)
+                : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
     const isGroup = feed.username.startsWith('groups/');
     const isEvent = feed.username.startsWith('events/') || feed.username === 'events';
-    const platformLabel = platform === 'twitter' ? 'Twitter' :
+    const platformLabel = platform === 'reddit' ? 'Reddit' :
+                          platform === 'twitter' ? 'Twitter' :
                           platform === 'facebook' ? (isGroup ? 'FB Group' : isEvent ? 'FB Event' : 'Facebook') :
                           platform === 'linkedin' ? 'LinkedIn' :
                           platform === 'txt' ? 'Text' :
@@ -1113,6 +1144,7 @@ function buildFeedCard(feed) {
     const tokenSuffix = tokenQueryString('?');
     const publicUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
     const timeAgo = formatTimeAgo(feed.lastChecked);
+    const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt') ? '' : '@';
 
     card.innerHTML = `
       <div class="feed-card-content">
@@ -1126,7 +1158,7 @@ function buildFeedCard(feed) {
               <span class="feed-alias-text">${escapeHtml(feed.alias || feed.username)}</span>
             </div>
             <div class="feed-meta">
-              <a class="feed-username-link" href="#" data-url="${escapeHtml(feed.url)}" title="Open in browser">@${escapeHtml(feed.username)}</a>
+              <a class="feed-username-link" href="#" data-url="${escapeHtml(feed.url)}" title="Open in browser">${userPrefix}${escapeHtml(feed.username)}</a>
             </div>
           </div>
         </div>
@@ -1343,7 +1375,8 @@ async function exportOpml() {
     const groups = {};
     for (const feed of feeds) {
       const platform = feed.platform || 'instagram';
-      const category = platform === 'twitter' ? 'Twitter' :
+      const category = platform === 'reddit' ? 'Reddit' :
+        platform === 'twitter' ? 'Twitter' :
         platform === 'facebook' ? 'Facebook' :
         platform === 'linkedin' ? 'LinkedIn' :
         platform === 'txt' ? 'Text' :
@@ -1439,3 +1472,361 @@ function toast(message, type = 'success') {
     setTimeout(() => el.remove(), 300);
   }, 3000);
 }
+
+// ── Reddit Feed Builder Modal ───────────────────────────────────────────
+
+const redditModalOverlay = $('#reddit-modal-overlay');
+const btnOpenRedditModal = $('#btn-open-reddit-modal');
+const btnCloseRedditModal = $('#btn-close-reddit-modal');
+const btnCancelRedditModal = $('#btn-cancel-reddit-modal');
+const btnSubmitRedditModal = $('#btn-submit-reddit-modal');
+
+const redditTypeTabs = document.querySelectorAll('.reddit-type-tab');
+const redditViews = {
+  subreddit: $('#reddit-view-subreddit'),
+  search: $('#reddit-view-search'),
+  user: $('#reddit-view-user'),
+  direct: $('#reddit-view-direct'),
+};
+
+const redditSubName = $('#reddit-sub-name');
+const redditSubSortPills = document.querySelectorAll('#reddit-sub-sort-pills .reddit-pill');
+const redditSubTimeframeGroup = $('#reddit-sub-timeframe-group');
+const redditSubTimeframePills = document.querySelectorAll('#reddit-sub-timeframe-pills .reddit-pill');
+
+const redditSearchSub = $('#reddit-search-sub');
+const redditSearchQuery = $('#reddit-search-query');
+const redditSearchSortPills = document.querySelectorAll('#reddit-search-sort-pills .reddit-pill');
+const redditSearchTimeframeGroup = $('#reddit-search-timeframe-group');
+const redditSearchTimeframePills = document.querySelectorAll('#reddit-search-timeframe-pills .reddit-pill');
+const btnRedditAddFlair = $('#btn-reddit-add-flair');
+
+const redditUserName = $('#reddit-user-name');
+const redditUserSortPills = document.querySelectorAll('#reddit-user-sort-pills .reddit-pill');
+
+const redditPasteUrl = $('#reddit-paste-url');
+const redditCustomAlias = $('#reddit-custom-alias');
+const redditPreviewUrl = $('#reddit-preview-url');
+const redditModalError = $('#reddit-modal-error');
+
+let activeRedditTab = 'subreddit';
+let userCustomizedAlias = false;
+
+function cleanSubName(str) {
+  if (!str) return '';
+  return str.trim().replace(/^https?:\/\/(?:www\.|old\.|new\.)?reddit\.com\/r\//i, '').replace(/^[\\/]?r[\\/]/i, '').replace(/[\\/].*$/, '').trim();
+}
+
+function cleanUserName(str) {
+  if (!str) return '';
+  return str.trim().replace(/^https?:\/\/(?:www\.|old\.|new\.)?reddit\.com\/(?:user|u)\//i, '').replace(/^[\\/]?(?:user|u)[\\/]/i, '').replace(/[\\/].*$/, '').trim();
+}
+
+function getActivePillValue(pills, dataAttr) {
+  for (const pill of pills) {
+    if (pill.classList.contains('is-active')) {
+      return pill.dataset[dataAttr];
+    }
+  }
+  return '';
+}
+
+function setActivePill(pills, dataAttr, value) {
+  pills.forEach((p) => {
+    if (p.dataset[dataAttr] === value) {
+      p.classList.add('is-active');
+    } else {
+      p.classList.remove('is-active');
+    }
+  });
+}
+
+function updateRedditBuilder() {
+  if (!redditPreviewUrl) return;
+  let targetUrl = '';
+  let suggestedAlias = '';
+
+  if (activeRedditTab === 'subreddit') {
+    const rawSub = (redditSubName ? redditSubName.value : '') || '';
+    const sub = cleanSubName(rawSub) || 'technology';
+    const sort = getActivePillValue(redditSubSortPills, 'sort') || 'hot';
+
+    if (sort === 'top') {
+      if (redditSubTimeframeGroup) redditSubTimeframeGroup.style.display = 'flex';
+      const time = getActivePillValue(redditSubTimeframePills, 'time') || 'week';
+      targetUrl = `https://www.reddit.com/r/${sub}/top/?t=${time}`;
+      const timeLabels = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year', all: 'All Time' };
+      suggestedAlias = `r/${sub} - Top (${timeLabels[time] || time})`;
+    } else {
+      if (redditSubTimeframeGroup) redditSubTimeframeGroup.style.display = 'none';
+      targetUrl = `https://www.reddit.com/r/${sub}/${sort === 'hot' ? '' : sort + '/'}`;
+      suggestedAlias = `r/${sub} - ${sort.charAt(0).toUpperCase() + sort.slice(1)}`;
+    }
+  } else if (activeRedditTab === 'search') {
+    const rawSub = redditSearchSub ? redditSearchSub.value : '';
+    const sub = cleanSubName(rawSub);
+    const query = (redditSearchQuery ? redditSearchQuery.value : '').trim();
+    const sort = getActivePillValue(redditSearchSortPills, 'sort') || 'new';
+
+    const needsTime = sort === 'top' || sort === 'relevance';
+    if (redditSearchTimeframeGroup) redditSearchTimeframeGroup.style.display = needsTime ? 'flex' : 'none';
+    const time = getActivePillValue(redditSearchTimeframePills, 'time') || 'all';
+
+    const qParam = encodeURIComponent(query || 'query');
+    const timeParam = needsTime ? `&t=${time}` : '';
+
+    if (sub) {
+      targetUrl = `https://www.reddit.com/r/${sub}/search/?q=${qParam}&restrict_sr=1&sort=${sort}${timeParam}`;
+      suggestedAlias = `r/${sub} [${query || 'Search'}]`;
+    } else {
+      targetUrl = `https://www.reddit.com/search/?q=${qParam}&sort=${sort}${timeParam}`;
+      suggestedAlias = `Reddit [${query || 'Search'}]`;
+    }
+  } else if (activeRedditTab === 'user') {
+    const rawUser = redditUserName ? redditUserName.value : '';
+    const user = cleanUserName(rawUser) || 'username';
+    const sort = getActivePillValue(redditUserSortPills, 'sort') || 'submitted';
+    targetUrl = `https://www.reddit.com/user/${user}/${sort === 'submitted' ? 'submitted/' : sort + '/'}`;
+    suggestedAlias = `u/${user} (${sort === 'submitted' ? 'Submissions' : sort})`;
+  } else if (activeRedditTab === 'direct') {
+    targetUrl = (redditPasteUrl ? redditPasteUrl.value : '').trim() || 'https://www.reddit.com/';
+    suggestedAlias = (redditCustomAlias ? redditCustomAlias.value : '') || 'Reddit Feed';
+  }
+
+  redditPreviewUrl.textContent = targetUrl;
+  if (!userCustomizedAlias && redditCustomAlias) {
+    redditCustomAlias.value = suggestedAlias;
+  }
+}
+
+async function openRedditModal(initialUrl = '') {
+  if (!redditModalOverlay) return;
+  if (redditModalError) {
+    redditModalError.style.display = 'none';
+    redditModalError.textContent = '';
+  }
+  userCustomizedAlias = false;
+
+  const urlToParse = initialUrl || (inputUrl ? inputUrl.value.trim() : '');
+  if (urlToParse && (urlToParse.includes('reddit.com') || /^r\/|^u\//i.test(urlToParse))) {
+    try {
+      const parsed = await window.api.parseRedditUrl(urlToParse);
+      if (parsed) {
+        if (parsed.type === 'subreddit') {
+          switchRedditTab('subreddit');
+          if (redditSubName) redditSubName.value = parsed.targetName || '';
+          if (parsed.sort) setActivePill(redditSubSortPills, 'sort', parsed.sort);
+          if (parsed.timeframe) setActivePill(redditSubTimeframePills, 'time', parsed.timeframe);
+        } else if (parsed.type === 'search') {
+          switchRedditTab('search');
+          if (redditSearchSub) redditSearchSub.value = parsed.targetName || '';
+          if (redditSearchQuery) redditSearchQuery.value = parsed.query || '';
+          if (parsed.sort) setActivePill(redditSearchSortPills, 'sort', parsed.sort);
+          if (parsed.timeframe) setActivePill(redditSearchTimeframePills, 'time', parsed.timeframe);
+        } else if (parsed.type === 'user') {
+          switchRedditTab('user');
+          if (redditUserName) redditUserName.value = parsed.targetName || '';
+          if (parsed.sort) setActivePill(redditUserSortPills, 'sort', parsed.sort);
+        } else {
+          switchRedditTab('direct');
+          if (redditPasteUrl) redditPasteUrl.value = urlToParse;
+        }
+        if (parsed.alias && redditCustomAlias) {
+          redditCustomAlias.value = parsed.alias;
+          userCustomizedAlias = true;
+        }
+      }
+    } catch (e) {
+      // Fallback: direct tab
+      switchRedditTab('direct');
+      if (redditPasteUrl) redditPasteUrl.value = urlToParse;
+    }
+  }
+
+  updateRedditBuilder();
+  redditModalOverlay.style.display = 'flex';
+
+  // Focus appropriate input
+  setTimeout(() => {
+    if (activeRedditTab === 'subreddit' && redditSubName) redditSubName.focus();
+    else if (activeRedditTab === 'search' && redditSearchQuery) redditSearchQuery.focus();
+    else if (activeRedditTab === 'user' && redditUserName) redditUserName.focus();
+    else if (activeRedditTab === 'direct' && redditPasteUrl) redditPasteUrl.focus();
+  }, 100);
+}
+
+function closeRedditModal() {
+  if (redditModalOverlay) redditModalOverlay.style.display = 'none';
+}
+
+function switchRedditTab(tabName) {
+  activeRedditTab = tabName;
+  redditTypeTabs.forEach((tab) => {
+    tab.classList.toggle('is-active', tab.dataset.tab === tabName);
+  });
+  Object.keys(redditViews).forEach((key) => {
+    if (redditViews[key]) {
+      redditViews[key].style.display = key === tabName ? 'flex' : 'none';
+    }
+  });
+  updateRedditBuilder();
+}
+
+function setupRedditModal() {
+  if (!redditModalOverlay) return;
+
+  btnOpenRedditModal?.addEventListener('click', () => openRedditModal());
+  btnCloseRedditModal?.addEventListener('click', closeRedditModal);
+  btnCancelRedditModal?.addEventListener('click', closeRedditModal);
+
+  redditModalOverlay.addEventListener('click', (e) => {
+    if (e.target === redditModalOverlay) closeRedditModal();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && redditModalOverlay.style.display !== 'none') {
+      closeRedditModal();
+    }
+  });
+
+  // Tab buttons
+  redditTypeTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      switchRedditTab(tab.dataset.tab);
+    });
+  });
+
+  // Pill groups
+  function wirePillGroup(pills, dataAttr) {
+    pills.forEach((pill) => {
+      pill.addEventListener('click', () => {
+        pills.forEach((p) => p.classList.remove('is-active'));
+        pill.classList.add('is-active');
+        updateRedditBuilder();
+      });
+    });
+  }
+
+  wirePillGroup(redditSubSortPills, 'sort');
+  wirePillGroup(redditSubTimeframePills, 'time');
+  wirePillGroup(redditSearchSortPills, 'sort');
+  wirePillGroup(redditSearchTimeframePills, 'time');
+  wirePillGroup(redditUserSortPills, 'sort');
+
+  // Input events
+  redditSubName?.addEventListener('input', () => {
+    userCustomizedAlias = false;
+    updateRedditBuilder();
+  });
+  redditSearchSub?.addEventListener('input', () => {
+    userCustomizedAlias = false;
+    updateRedditBuilder();
+  });
+  redditSearchQuery?.addEventListener('input', () => {
+    userCustomizedAlias = false;
+    updateRedditBuilder();
+  });
+  redditUserName?.addEventListener('input', () => {
+    userCustomizedAlias = false;
+    updateRedditBuilder();
+  });
+  redditPasteUrl?.addEventListener('input', async () => {
+    const val = redditPasteUrl.value.trim();
+    if (val) {
+      try {
+        const parsed = await window.api.parseRedditUrl(val);
+        if (parsed && parsed.alias && redditCustomAlias) {
+          redditCustomAlias.value = parsed.alias;
+        }
+      } catch (_) {}
+    }
+    updateRedditBuilder();
+  });
+
+  redditCustomAlias?.addEventListener('input', () => {
+    userCustomizedAlias = (redditCustomAlias.value.trim().length > 0);
+  });
+
+  btnRedditAddFlair?.addEventListener('click', () => {
+    if (!redditSearchQuery) return;
+    const cur = (redditSearchQuery.value || '').trim();
+    if (!cur.includes('flair:')) {
+      redditSearchQuery.value = cur ? `${cur} flair:"Discussion"` : 'flair:"Discussion"';
+    }
+    userCustomizedAlias = false;
+    updateRedditBuilder();
+    redditSearchQuery.focus();
+  });
+
+  // Submit button
+  btnSubmitRedditModal?.addEventListener('click', async () => {
+    if (redditModalError) {
+      redditModalError.style.display = 'none';
+      redditModalError.textContent = '';
+    }
+
+    const targetUrl = (redditPreviewUrl ? redditPreviewUrl.textContent : '').trim();
+    if (!targetUrl || targetUrl === 'https://www.reddit.com/') {
+      if (redditModalError) {
+        redditModalError.textContent = 'Please configure a valid Reddit feed.';
+        redditModalError.style.display = 'block';
+      }
+      return;
+    }
+
+    if (activeRedditTab === 'subreddit' && !cleanSubName(redditSubName ? redditSubName.value : '')) {
+      if (redditModalError) {
+        redditModalError.textContent = 'Please enter a subreddit name.';
+        redditModalError.style.display = 'block';
+      }
+      redditSubName?.focus();
+      return;
+    }
+
+    if (activeRedditTab === 'user' && !cleanUserName(redditUserName ? redditUserName.value : '')) {
+      if (redditModalError) {
+        redditModalError.textContent = 'Please enter a username.';
+        redditModalError.style.display = 'block';
+      }
+      redditUserName?.focus();
+      return;
+    }
+
+    const alias = (redditCustomAlias ? redditCustomAlias.value : '').trim() || undefined;
+
+    btnSubmitRedditModal.disabled = true;
+    const spinner = btnSubmitRedditModal.querySelector('.btn-spinner');
+    const textSpan = btnSubmitRedditModal.querySelector('.btn-text');
+    if (spinner) spinner.style.display = 'inline-block';
+    if (textSpan) textSpan.textContent = 'Adding Feed…';
+
+    try {
+      await window.api.addFeed({
+        targetUrl,
+        fullUrl: targetUrl,
+        alias,
+        category: 'Reddit',
+        platform: 'reddit'
+      });
+      closeRedditModal();
+      await renderFeeds();
+      toast('Reddit feed added successfully!', 'success');
+      if (inputUrl && inputUrl.value.includes('reddit.com')) {
+        inputUrl.value = '';
+      }
+    } catch (err) {
+      if (redditModalError) {
+        redditModalError.textContent = err.message || 'Failed to add Reddit feed.';
+        redditModalError.style.display = 'block';
+      }
+      toast(err.message || 'Failed to add Reddit feed', 'error');
+    } finally {
+      btnSubmitRedditModal.disabled = false;
+      if (spinner) spinner.style.display = 'none';
+      if (textSpan) textSpan.textContent = 'Add Reddit Feed';
+    }
+  });
+
+  updateRedditBuilder();
+}
+

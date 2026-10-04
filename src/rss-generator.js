@@ -11,6 +11,7 @@ const { resolveFeedBaseUrl } = require('./feed-url-base');
  */
 async function generateFeed(username, profileData, store, platform) {
   platform = platform || 'instagram';
+  username = String(username || '');
   const feedDir = getFeedDir();
   if (!fs.existsSync(feedDir)) {
     fs.mkdirSync(feedDir, { recursive: true });
@@ -53,16 +54,26 @@ async function generateFeed(username, profileData, store, platform) {
       favicon: 'https://cdn-icons-png.flaticon.com/512/1006/1006771.png',
       label: 'Custom',
     },
+    reddit: {
+      siteUrl: profileData.fullUrl || profileData.siteUrl || (username.startsWith('http') ? username : `https://www.reddit.com/${username}`),
+      favicon: 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png',
+      label: 'Reddit',
+    },
   };
 
   const meta = platformMeta[platform] || platformMeta.instagram;
   const siteUrl = meta.siteUrl;
   const feedBase = resolveFeedBaseUrl(store);
-  const selfUrl = `${feedBase}/feed/${username}`;
+  const feedKey = profileData.feedKey || username.replace(/[\/\\?%*:|"<>]/g, '-');
+  const selfUrl = `${feedBase}/feed/${feedKey}`;
+
+  const feedTitle = platform === 'reddit'
+    ? `${profileData.alias || profileData.fullName || username} – ${meta.label}`
+    : `${profileData.fullName || username} (@${username}) – ${meta.label}`;
 
   const feed = new Feed({
-    title: `${profileData.fullName || username} (@${username}) – ${meta.label}`,
-    description: profileData.biography || `${meta.label} posts from @${username}`,
+    title: feedTitle,
+    description: profileData.biography || `${meta.label} posts from ${username}`,
     id: siteUrl,
     link: siteUrl,
     language: 'en',
@@ -81,36 +92,51 @@ async function generateFeed(username, profileData, store, platform) {
     },
   });
 
-  for (const post of profileData.posts.slice(0, 10)) {
+  for (let i = 0; i < Math.min(profileData.posts.length, 25); i++) {
+    const post = profileData.posts[i];
     const rawCaption = post.caption || '';
     const isAiGuess = isAccessibilityCaption(rawCaption);
     const displayCaption = isAiGuess ? '' : rawCaption;
 
-    const title = truncate(displayCaption || `Post by @${username}`, 120);
+    const title = post.title || truncate(displayCaption || `Post by ${username}`, 120);
     const altText = isAiGuess ? escapeHtml(rawCaption) : 'Post image';
-    const imageHtml = post.imageUrl
-      ? `<p><img src="${escapeHtml(post.imageUrl)}" alt="${altText}" style="max-width:100%;" /></p>`
+    const postImg = post.imageUrl || (post.media && post.media.find(m => m.type === 'image')?.url);
+    const postVid = post.videoUrl || (post.media && post.media.find(m => m.type === 'video')?.url);
+    const isVideo = Boolean(post.isVideo || postVid);
+
+    const imageHtml = postImg
+      ? `<p><img src="${escapeHtml(postImg)}" alt="${altText}" style="max-width:100%;" /></p>`
       : '';
-    const videoHtml = post.isVideo && post.videoUrl
-      ? `<p><video src="${escapeHtml(post.videoUrl)}" controls style="max-width:100%;"></video></p>`
+    const videoHtml = isVideo && postVid
+      ? `<p><video src="${escapeHtml(postVid)}" controls style="max-width:100%;"></video></p>`
       : '';
-    const captionHtml = displayCaption
+    const captionHtml = displayCaption && displayCaption !== post.title && displayCaption !== `u/${post.author}`
       ? `<p>${escapeHtml(displayCaption).replace(/\n/g, '<br/>')}</p>`
       : '';
-    const statsHtml = `<p><small>❤️ ${post.likes} · 💬 ${post.comments}</small></p>`;
+    const externalLinkHtml = post.externalUrl && post.externalUrl !== post.permalink
+      ? `<p><a href="${escapeHtml(post.externalUrl)}" target="_blank" rel="noopener">🔗 View Source Article</a></p>`
+      : '';
+
+    const cleanAuthor = (post.author || '').replace(/^u\//i, '');
+    const authorLine = cleanAuthor ? `Posted by u/${escapeHtml(cleanAuthor)} · ` : '';
+    const likesCount = (post.score !== undefined ? post.score : post.likes) ?? 0;
+    const commentsCount = (post.commentCount !== undefined ? post.commentCount : post.comments) ?? 0;
+    const formattedLikes = Number(likesCount).toLocaleString();
+    const formattedComments = Number(commentsCount).toLocaleString();
+    const statsHtml = `<p><small>${authorLine}${platform === 'reddit' ? '🔺' : '❤️'} ${formattedLikes} · 💬 ${formattedComments}</small></p>`;
 
     feed.addItem({
       title,
-      id: post.permalink,
-      link: post.permalink,
+      id: post.permalink || `${siteUrl}#${post.id || i}`,
+      link: post.permalink || siteUrl,
       description: truncate(displayCaption || title, 300),
-      content: `${imageHtml}${videoHtml}${captionHtml}${statsHtml}`,
+      content: `${imageHtml}${videoHtml}${captionHtml}${externalLinkHtml}${statsHtml}`,
       date: new Date(post.timestamp),
-      image: post.imageUrl || undefined,
+      image: postImg || undefined,
       author: [
         {
-          name: profileData.fullName || username,
-          link: siteUrl,
+          name: cleanAuthor ? `u/${cleanAuthor}` : (profileData.fullName || username),
+          link: cleanAuthor ? `https://www.reddit.com/user/${cleanAuthor}` : siteUrl,
         },
       ],
     });
@@ -120,8 +146,8 @@ async function generateFeed(username, profileData, store, platform) {
   const rssXml = feed.rss2();
   const atomXml = feed.atom1();
 
-  fs.writeFileSync(path.join(feedDir, `${username}.rss.xml`), rssXml, 'utf-8');
-  fs.writeFileSync(path.join(feedDir, `${username}.atom.xml`), atomXml, 'utf-8');
+  fs.writeFileSync(path.join(feedDir, `${feedKey}.rss.xml`), rssXml, 'utf-8');
+  fs.writeFileSync(path.join(feedDir, `${feedKey}.atom.xml`), atomXml, 'utf-8');
 
   return { rss: rssXml, atom: atomXml };
 }

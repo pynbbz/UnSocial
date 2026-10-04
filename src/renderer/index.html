@@ -68,6 +68,18 @@
             </svg>
           </button>
         </div>
+        <!-- Reddit -->
+        <div class="platform-login" id="rd-login-group">
+          <div id="rd-login-status" class="status-badge offline platform-clickable" title="Click to login / logout Reddit">
+            <span class="status-dot"></span>
+            <span class="status-text">Reddit</span>
+          </div>
+          <button type="button" class="btn-reconnect" id="rd-reconnect" title="Reconnect Reddit" style="display: none;">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+        </div>
         <span class="status-badge feed-count-badge" id="feed-count">0 feeds</span>
         <!-- Public Access Button -->
         <button class="btn-public-access" id="btn-public-access" title="Public Access & Feed Authentication">
@@ -105,7 +117,7 @@
         <input
           type="text"
           id="input-url"
-          placeholder="Enter any URL — social media, website, or .txt…"
+          placeholder="Enter any URL — Reddit, social media, website, or .txt…"
           autocomplete="off"
         />
         <button id="btn-add" class="btn btn-primary btn-icon-action" title="Add feed" aria-label="Add feed">
@@ -120,6 +132,12 @@
               <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
             </svg>
           </span>
+        </button>
+        <button type="button" id="btn-open-reddit-modal" class="btn btn-outline btn-reddit-trigger" title="Configure and add Reddit feed" aria-label="Configure and add Reddit feed">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="#FF4500" aria-hidden="true">
+            <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.702zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.688-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.197-2.512-.73a.326.326 0 0 0-.232-.095z"/>
+          </svg>
+          <span>+ Reddit</span>
         </button>
         <div class="add-controls">
           <button id="btn-blur-toggle" class="btn btn-outline btn-icon-action" title="Blur URLs" aria-label="Blur URLs" data-state="off">
@@ -378,6 +396,160 @@
                 <button class="btn btn-outline btn-sm" id="btn-token-clear">Remove Token</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reddit Feed Builder Overlay -->
+    <div class="public-access-overlay" id="reddit-modal-overlay" style="display:none;">
+      <div class="public-access-page reddit-modal-page">
+        <div class="public-access-page-header">
+          <div class="public-access-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="#FF4500" aria-hidden="true">
+              <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.702zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.688-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.197-2.512-.73a.326.326 0 0 0-.232-.095z"/>
+            </svg>
+            <h2>Reddit Feed Builder</h2>
+          </div>
+          <button class="btn-close-overlay" id="btn-close-reddit-modal" title="Close">✕</button>
+        </div>
+        <div class="public-access-content reddit-modal-content">
+          <!-- Feed Type Selector (Subreddit, Search & Flair, User, Direct) -->
+          <div class="reddit-type-tabs" role="tablist">
+            <button type="button" class="reddit-type-tab is-active" data-tab="subreddit">Subreddit</button>
+            <button type="button" class="reddit-type-tab" data-tab="search">Search &amp; Flair</button>
+            <button type="button" class="reddit-type-tab" data-tab="user">User Posts</button>
+            <button type="button" class="reddit-type-tab" data-tab="direct">Direct URL / Paste</button>
+          </div>
+
+          <!-- Direct URL Section -->
+          <div class="reddit-mode-view" id="reddit-view-direct" style="display:none;">
+            <div class="reddit-form-group">
+              <label for="reddit-paste-url">Paste any Reddit URL (post, subreddit, search, user, or .rss):</label>
+              <input type="text" id="reddit-paste-url" class="reddit-input" placeholder="https://www.reddit.com/r/technology/top/?t=month" autocomplete="off" />
+              <p class="subtle" style="margin-top:6px;">URL will be parsed automatically into appropriate feed settings.</p>
+            </div>
+          </div>
+
+          <!-- Subreddit Section -->
+          <div class="reddit-mode-view" id="reddit-view-subreddit">
+            <div class="reddit-form-group">
+              <label for="reddit-sub-name">Subreddit Name:</label>
+              <div class="input-with-prefix">
+                <span class="input-prefix">r/</span>
+                <input type="text" id="reddit-sub-name" class="reddit-input" placeholder="technology" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <label>Sort By:</label>
+              <div class="reddit-pill-group" id="reddit-sub-sort-pills">
+                <button type="button" class="reddit-pill is-active" data-sort="hot">🔥 Hot</button>
+                <button type="button" class="reddit-pill" data-sort="top">🏆 Top</button>
+                <button type="button" class="reddit-pill" data-sort="new">✨ New</button>
+                <button type="button" class="reddit-pill" data-sort="rising">⚡ Rising</button>
+              </div>
+            </div>
+
+            <div class="reddit-form-group" id="reddit-sub-timeframe-group" style="display:none;">
+              <label>Timeframe (for Top):</label>
+              <div class="reddit-pill-group" id="reddit-sub-timeframe-pills">
+                <button type="button" class="reddit-pill" data-time="day">Today</button>
+                <button type="button" class="reddit-pill is-active" data-time="week">This Week</button>
+                <button type="button" class="reddit-pill" data-time="month">This Month</button>
+                <button type="button" class="reddit-pill" data-time="year">This Year</button>
+                <button type="button" class="reddit-pill" data-time="all">All Time</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Search & Flair Section -->
+          <div class="reddit-mode-view" id="reddit-view-search" style="display:none;">
+            <div class="reddit-form-group">
+              <label for="reddit-search-sub">Subreddit (optional for global):</label>
+              <div class="input-with-prefix">
+                <span class="input-prefix">r/</span>
+                <input type="text" id="reddit-search-sub" class="reddit-input" placeholder="AndroidTV" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <label for="reddit-search-query">Search Keyword or Flair Query:</label>
+              <input type="text" id="reddit-search-query" class="reddit-input" placeholder='e.g. flair:"app" or release' autocomplete="off" />
+              <div class="reddit-input-hints">
+                <button type="button" class="reddit-hint-btn" id="btn-reddit-add-flair">+ Add Flair syntax</button>
+                <span class="subtle">Matches posts with specific flair tags or terms</span>
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <label>Search Sort:</label>
+              <div class="reddit-pill-group" id="reddit-search-sort-pills">
+                <button type="button" class="reddit-pill is-active" data-sort="new">Newest</button>
+                <button type="button" class="reddit-pill" data-sort="relevance">Relevance</button>
+                <button type="button" class="reddit-pill" data-sort="top">Top</button>
+                <button type="button" class="reddit-pill" data-sort="comments">Most Comments</button>
+              </div>
+            </div>
+
+            <div class="reddit-form-group" id="reddit-search-timeframe-group" style="display:none;">
+              <label>Search Timeframe:</label>
+              <div class="reddit-pill-group" id="reddit-search-timeframe-pills">
+                <button type="button" class="reddit-pill is-active" data-time="all">All Time</button>
+                <button type="button" class="reddit-pill" data-time="year">Past Year</button>
+                <button type="button" class="reddit-pill" data-time="month">Past Month</button>
+                <button type="button" class="reddit-pill" data-time="week">Past Week</button>
+                <button type="button" class="reddit-pill" data-time="day">Past 24h</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- User Posts Section -->
+          <div class="reddit-mode-view" id="reddit-view-user" style="display:none;">
+            <div class="reddit-form-group">
+              <label for="reddit-user-name">Reddit Username:</label>
+              <div class="input-with-prefix">
+                <span class="input-prefix">u/</span>
+                <input type="text" id="reddit-user-name" class="reddit-input" placeholder="joaomgcd" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <label>Type / Sort:</label>
+              <div class="reddit-pill-group" id="reddit-user-sort-pills">
+                <button type="button" class="reddit-pill is-active" data-sort="submitted">Submitted Posts</button>
+                <button type="button" class="reddit-pill" data-sort="hot">Hot</button>
+                <button type="button" class="reddit-pill" data-sort="new">New</button>
+                <button type="button" class="reddit-pill" data-sort="top">Top</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Common Options: Title / Alias & Live Preview -->
+          <div class="reddit-common-section">
+            <div class="reddit-form-group">
+              <label for="reddit-custom-alias">Feed Title / Alias:</label>
+              <input type="text" id="reddit-custom-alias" class="reddit-input" placeholder="r/technology" autocomplete="off" />
+            </div>
+
+            <div class="reddit-preview-card">
+              <div class="reddit-preview-label">Target Reddit Feed URL:</div>
+              <div class="reddit-preview-url" id="reddit-preview-url">https://www.reddit.com/r/technology/</div>
+            </div>
+
+            <div id="reddit-modal-error" class="add-error" style="color:var(--danger, #ff4d4f); font-size: 13px; display:none;"></div>
+          </div>
+
+          <div class="reddit-modal-actions">
+            <button type="button" class="btn btn-outline" id="btn-cancel-reddit-modal">Cancel</button>
+            <button type="button" class="btn btn-primary btn-reddit-submit" id="btn-submit-reddit-modal">
+              <span class="btn-text">Add Reddit Feed</span>
+              <span class="btn-spinner" aria-hidden="true" style="display:none;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                </svg>
+              </span>
+            </button>
           </div>
         </div>
       </div>

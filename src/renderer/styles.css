@@ -1476,3 +1476,241 @@ body {
   gap: 6px;
 }
 
+/* ── Reddit Button & Modal Styling ─────────────────────────────────────── */
+
+.btn-reddit-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  border-color: rgba(255, 69, 0, 0.4);
+  color: #ff4500;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-reddit-trigger:hover {
+  background: rgba(255, 69, 0, 0.12);
+  border-color: #ff4500;
+  color: #ff5722;
+}
+
+.reddit-modal-page {
+  max-width: 620px;
+}
+
+.reddit-modal-content {
+  gap: 16px;
+}
+
+.reddit-type-tabs {
+  display: flex;
+  background: var(--bg-card, #1c1c1f);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 4px;
+}
+
+.reddit-type-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.reddit-type-tab:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.reddit-type-tab.is-active {
+  background: #ff4500;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(255, 69, 0, 0.35);
+}
+
+.reddit-mode-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.reddit-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reddit-form-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #aaa);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.input-with-prefix {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.input-with-prefix:focus-within {
+  border-color: #ff4500;
+  box-shadow: 0 0 0 1px #ff4500;
+}
+
+.input-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+
+.reddit-input {
+  flex: 1;
+  padding: 9px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.input-with-prefix .reddit-input {
+  border: none;
+  background: transparent;
+}
+
+.reddit-input:focus {
+  border-color: #ff4500;
+  box-shadow: 0 0 0 1px #ff4500;
+}
+
+.reddit-pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reddit-pill {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.reddit-pill:hover {
+  border-color: rgba(255, 69, 0, 0.5);
+  color: var(--text);
+}
+
+.reddit-pill.is-active {
+  background: rgba(255, 69, 0, 0.15);
+  border-color: #ff4500;
+  color: #ff4500;
+  font-weight: 600;
+}
+
+.reddit-input-hints {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.reddit-hint-btn {
+  background: none;
+  border: none;
+  color: #ff4500;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.reddit-hint-btn:hover {
+  opacity: 1;
+}
+
+.reddit-common-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.reddit-preview-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reddit-preview-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.reddit-preview-url {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #ff7744;
+  word-break: break-all;
+  user-select: all;
+}
+
+.reddit-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-reddit-submit {
+  background: #ff4500;
+  border-color: #ff4500;
+  color: #ffffff;
+}
+
+.btn-reddit-submit:hover {
+  background: #e03d00;
+  border-color: #e03d00;
+}
+
+
