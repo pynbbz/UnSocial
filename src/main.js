@@ -90,6 +90,7 @@ const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
+const { getRealisticUserAgent } = require('./user-agent');
 const tunnel = require('./tunnel');
 
 const crypto = require('crypto');
@@ -353,10 +354,11 @@ function scheduleNextRefresh() {
       const age = Date.now() - oldestTime;
       const timeUntilStale = getMaxStaleMs(nextFeed) - age;
 
+      const minGap = nextFeed.platform === 'facebook' ? 45 * 1000 : 5 * 1000;
       if (timeUntilStale <= 0) {
-        interval = 5 * 1000;
+        interval = minGap;
       } else if (timeUntilStale < interval) {
-        interval = Math.max(timeUntilStale - 2 * 60 * 1000, 5 * 1000);
+        interval = Math.max(timeUntilStale - 2 * 60 * 1000, minGap);
       }
     }
   } catch (err) {
@@ -460,6 +462,21 @@ async function refreshOldestFeed() {
 app.whenReady().then(async () => {
   // Persist cookies across restarts
   const ses = session.defaultSession;
+  const realisticUA = getRealisticUserAgent();
+  ses.setUserAgent(realisticUA);
+
+  // Strip restrictive Content-Security-Policy on LinkedIn so embedded resources and subframes don't trigger ERR_BLOCKED_BY_CSP
+  ses.webRequest.onHeadersReceived(
+    { urls: ['*://*.linkedin.com/*', '*://*.licdn.com/*'] },
+    (details, callback) => {
+      const responseHeaders = { ...details.responseHeaders };
+      delete responseHeaders['content-security-policy'];
+      delete responseHeaders['Content-Security-Policy'];
+      delete responseHeaders['content-security-policy-report-only'];
+      delete responseHeaders['Content-Security-Policy-Report-Only'];
+      callback({ responseHeaders });
+    }
+  );
 
   createMainWindow();
   createTray();
@@ -805,10 +822,14 @@ function openLoginWindow() {
       partition: undefined,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
   loginWindow.setMenuBarVisibility(false);
+  const chromeUA = getRealisticUserAgent();
+  loginWindow.webContents.session.setUserAgent(chromeUA);
+  loginWindow.webContents.setUserAgent(chromeUA);
   loginWindow.loadURL('https://www.instagram.com/accounts/login/');
 
   loginWindow.webContents.on('did-navigate', (_e, url) => {
@@ -836,8 +857,8 @@ function openTwitterLoginWindow() {
   }
 
   twitterLoginWindow = new BrowserWindow({
-    width: 500,
-    height: 720,
+    width: 650,
+    height: 780,
     parent: mainWindow,
     modal: false,
     title: 'Login to Twitter / X',
@@ -845,39 +866,89 @@ function openTwitterLoginWindow() {
       partition: undefined,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
   twitterLoginWindow.setMenuBarVisibility(false);
 
-  // Spoof a real Chrome user agent — Twitter/X blocks or misbehaves with
-  // Electron's default UA that contains "Electron".  Set on the session so
-  // it applies to all sub-requests (XHR, fetch) not just top-level navigation.
-  const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const chromeUA = getRealisticUserAgent();
   twitterLoginWindow.webContents.session.setUserAgent(chromeUA);
   twitterLoginWindow.webContents.setUserAgent(chromeUA);
 
-  // Clear any stale Twitter cookies that might cause "wrong password" errors
-  (async () => {
-    const domains = ['x.com', 'twitter.com'];
-    for (const domain of domains) {
-      const cookies = await session.defaultSession.cookies.get({ domain });
-      for (const cookie of cookies) {
-        const url = `https://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
-        await session.defaultSession.cookies.remove(url, cookie.name).catch(() => {});
-      }
-    }
-    twitterLoginWindow.loadURL('https://x.com/i/flow/login');
-  })();
+  // Allow popups for Google and Apple OAuth
+  twitterLoginWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'allow' };
+  });
 
-  twitterLoginWindow.webContents.on('did-navigate', (_e, url) => {
-    if (url.startsWith('https://x.com/home') || url.startsWith('https://twitter.com/home')) {
-      mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn: true });
-      twitterLoginWindow.close();
+  // Inject helper banner explaining that Twitter/X web requires Username (@handle), not email
+  const injectTwitterBanner = `
+    (function() {
+      if (document.getElementById('unsocial-twitter-tip')) return;
+      const bar = document.createElement('div');
+      bar.id = 'unsocial-twitter-tip';
+      bar.innerHTML = '<strong>Tip:</strong> Please enter your <strong>Twitter username (@handle)</strong>, NOT your email address. X blocks email logins on desktop web browsers.';
+      bar.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:9999999; background:#1d9bf0; color:#fff; padding:10px 16px; font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif; font-size:13px; line-height:1.4; text-align:center; box-shadow:0 2px 10px rgba(0,0,0,0.35); transition:background 0.3s;';
+      document.body.appendChild(bar);
+
+      // Watch for X's download_app_pivot redirect which happens if an email is entered
+      setInterval(() => {
+        const hash = window.location.hash || '';
+        const bodyText = document.body ? document.body.innerText : '';
+        if (hash.includes('download_app_pivot') || bodyText.includes('Get the app to finish signing up using email')) {
+          bar.style.background = '#e0245e';
+          bar.innerHTML = '<strong>⚠️ X blocked this email address!</strong> Please click the back arrow (←) above and enter your <strong>Twitter username (@handle)</strong> instead.';
+        }
+      }, 500);
+    })();
+  `;
+
+  twitterLoginWindow.webContents.on('did-finish-load', () => {
+    if (twitterLoginWindow && !twitterLoginWindow.isDestroyed()) {
+      twitterLoginWindow.webContents.executeJavaScript(injectTwitterBanner).catch(() => {});
     }
   });
 
+  twitterLoginWindow.webContents.on('did-navigate-in-page', () => {
+    if (twitterLoginWindow && !twitterLoginWindow.isDestroyed()) {
+      twitterLoginWindow.webContents.executeJavaScript(injectTwitterBanner).catch(() => {});
+    }
+  });
+
+  twitterLoginWindow.loadURL('https://x.com/i/flow/login');
+
+  let twitterLoginClosed = false;
+  let twitterPollTimer = null;
+
+  const tryCloseIfLoggedIn = async () => {
+    if (twitterLoginClosed) return;
+    try {
+      const cookies = await session.defaultSession.cookies.get({ domain: 'x.com' });
+      const authCookie = cookies.find(c => c.name === 'auth_token' && c.value.length > 0);
+      if (authCookie) {
+        twitterLoginClosed = true;
+        if (twitterPollTimer) { clearInterval(twitterPollTimer); twitterPollTimer = null; }
+        mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn: true });
+        if (twitterLoginWindow && !twitterLoginWindow.isDestroyed()) twitterLoginWindow.close();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  };
+
+  twitterPollTimer = setInterval(tryCloseIfLoggedIn, 1500);
+
+  const checkUrl = (url) => {
+    if (url.startsWith('https://x.com/home') || url.startsWith('https://twitter.com/home')) {
+      tryCloseIfLoggedIn();
+    }
+  };
+
+  twitterLoginWindow.webContents.on('did-navigate', (_e, url) => checkUrl(url));
+  twitterLoginWindow.webContents.on('did-navigate-in-page', (_e, url) => checkUrl(url));
+
   twitterLoginWindow.on('closed', () => {
+    if (twitterPollTimer) { clearInterval(twitterPollTimer); twitterPollTimer = null; }
     twitterLoginWindow = null;
     checkTwitterLoginStatus();
   });
@@ -901,10 +972,14 @@ function openFacebookLoginWindow() {
       partition: undefined,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
   facebookLoginWindow.setMenuBarVisibility(false);
+  const chromeUA = getRealisticUserAgent();
+  facebookLoginWindow.webContents.session.setUserAgent(chromeUA);
+  facebookLoginWindow.webContents.setUserAgent(chromeUA);
   facebookLoginWindow.loadURL('https://www.facebook.com/login/');
 
   facebookLoginWindow.webContents.on('did-navigate', (_e, url) => {
@@ -943,10 +1018,14 @@ function openLinkedInLoginWindow() {
       partition: undefined,
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
   linkedinLoginWindow.setMenuBarVisibility(false);
+  const chromeUA = getRealisticUserAgent();
+  linkedinLoginWindow.webContents.session.setUserAgent(chromeUA);
+  linkedinLoginWindow.webContents.setUserAgent(chromeUA);
   linkedinLoginWindow.loadURL('https://www.linkedin.com/login');
 
   // LinkedIn redirects through various URLs after login.  Only close the
@@ -1084,9 +1163,11 @@ async function checkLoginStatus() {
 
 async function checkTwitterLoginStatus() {
   try {
-    // Check both .x.com and x.com domains
-    const cookies = await session.defaultSession.cookies.get({ domain: 'x.com' });
-    const authCookie = cookies.find(c => (c.name === 'auth_token' || c.name === 'ct0') && c.value.length > 0);
+    // Check both x.com and twitter.com for actual auth_token cookie
+    const xCookies = await session.defaultSession.cookies.get({ domain: 'x.com' });
+    const twCookies = await session.defaultSession.cookies.get({ domain: 'twitter.com' });
+    const allCookies = [...xCookies, ...twCookies];
+    const authCookie = allCookies.find(c => c.name === 'auth_token' && c.value.length > 0);
     const loggedIn = !!authCookie;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('login-status', { platform: 'twitter', loggedIn });

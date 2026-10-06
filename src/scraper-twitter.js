@@ -1,4 +1,5 @@
 const { BrowserWindow } = require('electron');
+const { getRealisticUserAgent } = require('./user-agent');
 
 /**
  * Scrape a Twitter/X profile using a hidden Electron BrowserWindow.
@@ -16,8 +17,13 @@ async function scrapeTwitterProfile(username, _cookieString) {
     webPreferences: {
       contextIsolation: false,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
+
+  const chromeUA = getRealisticUserAgent();
+  hidden.webContents.session.setUserAgent(chromeUA);
+  hidden.webContents.setUserAgent(chromeUA);
 
   try {
     const result = await loadAndExtract(hidden, profileUrl, username);
@@ -229,12 +235,24 @@ function loadAndExtract(win, profileUrl, username) {
       }
     });
 
-    win.webContents.on('did-fail-load', (_e, code, desc) => {
+    win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+      // Ignore subframes and non-critical navigation codes
+      if (isMainFrame === false) return;
+      if (code === -3 || code === -2 || code === -30 || code === 'ERR_ABORTED' || code === 'ERR_FAILED' || code === 'ERR_BLOCKED_BY_CSP') return;
+      if (handled) return;
+      handled = true;
       clearTimeout(timeout);
       reject(new Error(`Failed to load @${username}'s Twitter profile: ${desc} (${code})`));
     });
 
-    win.loadURL(profileUrl);
+    win.loadURL(profileUrl).catch((err) => {
+      if (err && (err.code === 'ERR_ABORTED' || err.errno === -3 || err.code === 'ERR_FAILED' || err.errno === -2 || err.code === 'ERR_BLOCKED_BY_CSP' || err.errno === -30)) return;
+      if (!handled) {
+        handled = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
+    });
   });
 }
 

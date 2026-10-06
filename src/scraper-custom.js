@@ -1,5 +1,6 @@
 const { BrowserWindow, session } = require('electron');
 const path = require('path');
+const { getRealisticUserAgent } = require('./user-agent');
 
 /**
  * Custom Website Scraper
@@ -132,7 +133,7 @@ function startCustomWizard(siteUrl, parentWindow) {
     });
 
     // Spoof a real Chrome user agent to avoid bot-detection blocks
-    const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const chromeUA = getRealisticUserAgent();
     wizardWin.webContents.session.setUserAgent(chromeUA);
     wizardWin.webContents.setUserAgent(chromeUA);
 
@@ -165,11 +166,12 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
       webPreferences: {
         contextIsolation: false,
         nodeIntegration: false,
+        backgroundThrottling: false,
       },
     });
 
     // Spoof user agent
-    const chromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    const chromeUA = getRealisticUserAgent();
     hidden.webContents.session.setUserAgent(chromeUA);
     hidden.webContents.setUserAgent(chromeUA);
 

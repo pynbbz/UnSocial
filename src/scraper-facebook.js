@@ -1,4 +1,5 @@
 const { BrowserWindow } = require('electron');
+const { getRealisticUserAgent } = require('./user-agent');
 
 /**
  * Scrape a Facebook page, group, or event using a hidden Electron BrowserWindow.
@@ -38,8 +39,13 @@ async function scrapeFacebookProfile(identifier, subTab, fullUrl) {
     webPreferences: {
       contextIsolation: false,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
+
+  const chromeUA = getRealisticUserAgent();
+  hidden.webContents.session.setUserAgent(chromeUA);
+  hidden.webContents.setUserAgent(chromeUA);
 
   try {
     const result = await loadAndExtract(hidden, profileUrl, identifier, { isGroup, isEvent, subTab });
@@ -60,29 +66,42 @@ function loadAndExtract(win, profileUrl, identifier, { isGroup, isEvent, subTab 
       if (handled) return;
       handled = true;
 
-      // Facebook is JS-heavy; wait for rendering
-      const waitTime = (isGroup || isEvent) ? 10000 : 8000;
-      await sleep(waitTime);
+      // Mask automation signals
+      await win.webContents.executeJavaScript(`
+        try {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        } catch (_) {}
+      `).catch(() => {});
+
+      // Facebook is JS-heavy; wait for rendering with slight random jitter
+      const baseWait = (isGroup || isEvent) ? 9000 : 7000;
+      await sleep(baseWait + Math.floor(Math.random() * 2000));
 
       try {
         // Check for login wall
         const currentUrl = win.webContents.getURL();
         if (currentUrl.includes('/login') || currentUrl.includes('checkpoint')) {
           clearTimeout(timeout);
-          reject(new Error('Facebook requires login. Please log in to Facebook first.'));
+          reject(new Error('Facebook requires login or verification checkpoint. Please check your Facebook login in UnSocial.'));
           return;
         }
 
-        // Scroll to trigger lazy content loading
-        await win.webContents.executeJavaScript('window.scrollBy(0, 600)');
-        await sleep(2000);
-        await win.webContents.executeJavaScript('window.scrollBy(0, 600)');
-        await sleep(2000);
-        await win.webContents.executeJavaScript('window.scrollBy(0, 600)');
-        await sleep(2000);
+        // Scroll with varied offsets and human-like pauses to trigger lazy content loading
+        const scroll1 = Math.floor(500 + Math.random() * 200);
+        await win.webContents.executeJavaScript(`window.scrollBy(0, ${scroll1})`);
+        await sleep(1800 + Math.floor(Math.random() * 600));
+
+        const scroll2 = Math.floor(550 + Math.random() * 200);
+        await win.webContents.executeJavaScript(`window.scrollBy(0, ${scroll2})`);
+        await sleep(1800 + Math.floor(Math.random() * 600));
+
+        const scroll3 = Math.floor(500 + Math.random() * 200);
+        await win.webContents.executeJavaScript(`window.scrollBy(0, ${scroll3})`);
+        await sleep(1800 + Math.floor(Math.random() * 600));
+
         // Scroll back to top so position-based filtering works correctly
         await win.webContents.executeJavaScript('window.scrollTo(0, 0)');
-        await sleep(1000);
+        await sleep(1000 + Math.floor(Math.random() * 400));
 
         // Determine page type for extraction
         const pageType = isGroup && subTab === 'events' ? 'group_events'
@@ -530,13 +549,23 @@ function loadAndExtract(win, profileUrl, identifier, { isGroup, isEvent, subTab 
       }
     });
 
-    win.webContents.on('did-fail-load', (_e, code, desc) => {
+    win.webContents.on('did-fail-load', (_e, code, desc, _url, isMainFrame) => {
+      // Ignore subframes and non-critical navigation cancellations
+      if (isMainFrame === false) return;
+      if (code === -3 || code === -2 || code === -30 || code === 'ERR_ABORTED' || code === 'ERR_FAILED' || code === 'ERR_BLOCKED_BY_CSP') return;
+      if (handled) return;
+      handled = true;
       clearTimeout(timeout);
       reject(new Error(`Failed to load Facebook page: ${desc} (${code})`));
     });
 
-    win.loadURL(profileUrl, {
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    win.loadURL(profileUrl).catch((err) => {
+      if (err && (err.code === 'ERR_ABORTED' || err.errno === -3 || err.code === 'ERR_FAILED' || err.errno === -2)) return;
+      if (!handled) {
+        handled = true;
+        clearTimeout(timeout);
+        reject(err);
+      }
     });
   });
 }

@@ -1,4 +1,5 @@
 const { BrowserWindow } = require('electron');
+const { getRealisticUserAgent } = require('./user-agent');
 
 /**
  * Scrape a Reddit page (subreddit, search results, or user profile)
@@ -32,11 +33,12 @@ async function scrapeReddit(targetUrl, _cookieString) {
     webPreferences: {
       contextIsolation: false,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
   // Use a realistic user agent
-  const chromeUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const chromeUA = getRealisticUserAgent();
   hidden.webContents.session.setUserAgent(chromeUA);
   hidden.webContents.setUserAgent(chromeUA);
 
