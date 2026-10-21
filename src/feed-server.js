@@ -10,7 +10,9 @@ let server = null;
  * Start a local Express server that serves the generated RSS/Atom feed files.
  * Any RSS reader can subscribe to:  http://localhost:<port>/feed/<username>
  */
-function startFeedServer(store) {
+function startFeedServer(store, options = {}) {
+  if (server) return server;
+
   const port = store.get('serverPort');
   const app = express();
 
@@ -52,6 +54,16 @@ function startFeedServer(store) {
     const contentType =
       format === 'atom' ? 'application/atom+xml' : 'application/rss+xml';
     res.header('Content-Type', `${contentType}; charset=utf-8`);
+    res.on('finish', () => {
+      if (typeof options.onFeedServed === 'function') {
+        options.onFeedServed({
+          username,
+          format,
+          statusCode: res.statusCode,
+          userAgent: req.get('user-agent') || '',
+        });
+      }
+    });
     res.sendFile(filePath);
   });
 
@@ -86,13 +98,21 @@ function startFeedServer(store) {
   server.on('error', (err) => {
     console.error('Feed server error:', err.message);
   });
+
+  return server;
 }
 
 function stopFeedServer() {
-  if (server) {
-    server.close();
-    server = null;
-  }
+  if (!server) return Promise.resolve();
+
+  const activeServer = server;
+  server = null;
+  return new Promise((resolve, reject) => {
+    activeServer.close((error) => {
+      if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error);
+      else resolve();
+    });
+  });
 }
 
 module.exports = { startFeedServer, stopFeedServer };
