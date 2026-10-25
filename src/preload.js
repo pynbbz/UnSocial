@@ -71,6 +71,11 @@ contextBridge.exposeInMainWorld('api', {
   setFeedPublicBaseUrl: (url) => ipcRenderer.invoke('set-feed-public-base-url', url),
   getResolvedFeedBaseUrl: () => ipcRenderer.invoke('get-resolved-feed-base-url'),
 
+  // Remote Web Access
+  getRemoteAuthSettings: () => ipcRenderer.invoke('get-remote-auth-settings'),
+  setRemoteAuthSettings: (settings) => ipcRenderer.invoke('set-remote-auth-settings', settings),
+  generateRemotePassword: () => ipcRenderer.invoke('generate-remote-password'),
+
   // Utils
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),

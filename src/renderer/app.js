@@ -131,6 +131,9 @@ let activeGroup = null;
   updateTunnelUI(tState.status);
   updatePublicAccessIcon();
 
+  // Load Remote Web Access settings
+  await updateRemoteWebUI();
+
   // Check logins
   await window.api.checkLogin();
   await window.api.checkTwitterLogin();
@@ -331,6 +334,7 @@ function updateTunnelUrls() {
       }
     });
   }
+  updateRemoteWebUI();
 }
 
 function updatePlatformLoginUI(platform, loggedIn) {
@@ -795,6 +799,98 @@ if (btnSaveFeedPublicBase) {
     updateTunnelUrls();
     await renderFeeds();
     toast('LAN base URL saved. Refresh feeds to rewrite RSS/Atom files.', 'success');
+  });
+}
+
+// ── Remote Web Access ───────────────────────────────────────────────────
+
+const remoteUsernameInput = $('#remote-username-input');
+const remotePasswordInput = $('#remote-password-input');
+const remoteWebUrlDisplay = $('#remote-web-url-display');
+const btnSaveRemoteAuth = $('#btn-save-remote-auth');
+const btnGenerateRemotePassword = $('#btn-generate-remote-password');
+const btnCopyRemoteWebUrl = $('#btn-copy-remote-web-url');
+const btnOpenRemoteWebUrl = $('#btn-open-remote-web-url');
+const remoteAuthSaveStatus = $('#remote-auth-save-status');
+
+let defaultRemoteWebUrl = '';
+
+async function updateRemoteWebUI() {
+  if (!window.api || !window.api.getRemoteAuthSettings) return;
+  try {
+    const auth = await window.api.getRemoteAuthSettings();
+    defaultRemoteWebUrl = auth.defaultWebUrl || '';
+
+    if (remoteUsernameInput && document.activeElement !== remoteUsernameInput) {
+      remoteUsernameInput.value = auth.username || 'admin';
+    }
+    if (remotePasswordInput && document.activeElement !== remotePasswordInput) {
+      remotePasswordInput.value = auth.password || '';
+    }
+
+    if (remoteWebUrlDisplay && document.activeElement !== remoteWebUrlDisplay) {
+      remoteWebUrlDisplay.value = auth.customWebUrl || auth.webUrl || auth.defaultWebUrl || '';
+    }
+  } catch (err) {
+    console.warn('Failed to load remote auth settings:', err);
+  }
+}
+
+const btnResetRemoteWebUrl = $('#btn-reset-remote-web-url');
+if (btnResetRemoteWebUrl) {
+  btnResetRemoteWebUrl.addEventListener('click', async () => {
+    if (remoteWebUrlDisplay) {
+      remoteWebUrlDisplay.value = defaultRemoteWebUrl || '';
+    }
+    await window.api.setRemoteAuthSettings({ webUrl: defaultRemoteWebUrl });
+    toast('Web URL reset to default', 'success');
+  });
+}
+
+if (btnSaveRemoteAuth) {
+  btnSaveRemoteAuth.addEventListener('click', async () => {
+    const username = (remoteUsernameInput?.value || '').trim() || 'admin';
+    const password = (remotePasswordInput?.value || '').trim();
+    const webUrl = (remoteWebUrlDisplay?.value || '').trim();
+    if (!password) {
+      toast('Please provide a password to protect remote access', 'error');
+      return;
+    }
+    await window.api.setRemoteAuthSettings({ username, password, webUrl });
+    if (remoteAuthSaveStatus) {
+      remoteAuthSaveStatus.style.display = 'inline';
+      setTimeout(() => {
+        remoteAuthSaveStatus.style.display = 'none';
+      }, 2500);
+    }
+    toast('Remote credentials & URL saved successfully!', 'success');
+  });
+}
+
+if (btnGenerateRemotePassword) {
+  btnGenerateRemotePassword.addEventListener('click', async () => {
+    const newPass = await window.api.generateRemotePassword();
+    if (remotePasswordInput) remotePasswordInput.value = newPass;
+    toast('New secure password generated & saved!', 'success');
+  });
+}
+
+if (btnCopyRemoteWebUrl) {
+  btnCopyRemoteWebUrl.addEventListener('click', () => {
+    const url = remoteWebUrlDisplay?.value;
+    if (url) {
+      copyToClipboard(url);
+      toast('Remote Web URL copied!', 'success');
+    }
+  });
+}
+
+if (btnOpenRemoteWebUrl) {
+  btnOpenRemoteWebUrl.addEventListener('click', () => {
+    const url = remoteWebUrlDisplay?.value;
+    if (url) {
+      window.api.openExternal(url);
+    }
   });
 }
 

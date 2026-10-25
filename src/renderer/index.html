@@ -397,6 +397,47 @@
               </div>
             </div>
           </div>
+
+          <!-- Remote Web Access (Mobile / Phone Feed Builder) -->
+          <div class="token-section remote-web-section" id="remote-web-section">
+            <div class="token-header">
+              <span class="token-icon">📱</span>
+              <strong>Remote Web Access</strong>
+              <span class="token-status enabled" id="remote-web-status">Active</span>
+            </div>
+            <div class="token-body">
+              <p class="lan-feed-base-hint" style="margin-bottom: 4px;">Access UnSocial from your phone's browser to add URLs, build Reddit feeds, or interactively select links for custom websites. Protected by username &amp; password.</p>
+              
+              <div class="tunnel-settings-row">
+                <label class="tunnel-setting-label" for="remote-web-url-display">Web URL</label>
+                <div class="token-row" style="flex: 1;">
+                  <input type="text" id="remote-web-url-display" class="tunnel-setting-input" placeholder="https://peymans-mac-mini.tail981e6.ts.net/remote" autocomplete="off" />
+                  <button type="button" class="btn btn-outline btn-sm" id="btn-reset-remote-web-url" title="Reset to auto-detected Tailscale URL">↺ Auto</button>
+                  <button type="button" class="btn btn-outline btn-sm" id="btn-copy-remote-web-url" title="Copy Remote Web URL">📋</button>
+                  <button type="button" class="btn btn-outline btn-sm" id="btn-open-remote-web-url" title="Open in Browser">↗</button>
+                </div>
+              </div>
+              <p class="lan-feed-base-hint" style="margin-top: 2px; font-size: 11px;">Customize this URL to whatever you prefer (e.g. <code>https://peymans-mac-mini.tail981e6.ts.net/remote</code>). Click "Save Settings" below to save.</p>
+
+              <div class="tunnel-settings-row">
+                <label class="tunnel-setting-label" for="remote-username-input">Username</label>
+                <input type="text" id="remote-username-input" class="tunnel-setting-input" placeholder="admin" autocomplete="off" />
+              </div>
+
+              <div class="tunnel-settings-row">
+                <label class="tunnel-setting-label" for="remote-password-input">Password</label>
+                <div class="token-row" style="flex: 1;">
+                  <input type="text" id="remote-password-input" class="tunnel-setting-input" placeholder="Enter password" autocomplete="off" />
+                  <button type="button" class="btn btn-outline btn-sm" id="btn-generate-remote-password" title="Generate Secure Password">⚡ Generate</button>
+                </div>
+              </div>
+
+              <div class="token-actions" style="display: flex; align-items: center; gap: 8px;">
+                <button type="button" class="btn btn-primary btn-sm" id="btn-save-remote-auth">Save Credentials</button>
+                <span id="remote-auth-save-status" style="font-size: 12px; color: #4ade80; display: none;">✓ Saved</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

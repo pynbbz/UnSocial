@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f0f0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>UnSocial Remote</title>
+  <script>
+    if (window.location.pathname === '/remote') {
+      window.location.replace('/remote/' + window.location.search + window.location.hash);
+    }
+  </script>
+  <link rel="stylesheet" href="remote-assets/style.css" />
+</head>
+<body>
+  <!-- ── App Container ─────────────────────────────────────────────────────── -->
+  <div id="app" class="app-root">
+
+    <!-- ── Login View ──────────────────────────────────────────────────────── -->
+    <div id="view-login" class="view-container active">
+      <div class="login-card">
+        <div class="brand-header">
+          <div class="logo-badge">
+            <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 11a9 9 0 0 1 9 9"></path>
+              <path d="M4 4a16 16 0 0 1 16 16"></path>
+              <circle cx="5" cy="19" r="1" fill="currentColor"></circle>
+            </svg>
+          </div>
+          <h1 class="brand-title">UnSocial</h1>
+          <p class="brand-subtitle">Remote Management & Feed Builder</p>
+        </div>
+
+        <form id="form-login" class="login-form">
+          <div class="form-group">
+            <label for="login-username">Username</label>
+            <input type="text" id="login-username" class="input-field" placeholder="admin" autocomplete="username" autocapitalize="none" required spellcheck="false" />
+          </div>
+
+          <div class="form-group">
+            <label for="login-password">Password</label>
+            <div class="password-wrapper">
+              <input type="password" id="login-password" class="input-field" placeholder="••••••••••••" autocomplete="current-password" required />
+              <button type="button" id="btn-toggle-password" class="btn-icon" aria-label="Toggle password visibility">👁️</button>
+            </div>
+          </div>
+
+          <div id="login-error" class="alert-error" style="display: none;"></div>
+
+          <button type="submit" id="btn-login-submit" class="btn btn-primary btn-block">
+            <span class="btn-text">Sign In</span>
+            <span class="spinner" style="display: none;"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ── Authenticated Main View ─────────────────────────────────────────── -->
+    <div id="view-main" class="view-container" style="display: none;">
+      <!-- Top Navigation -->
+      <header class="app-header">
+        <div class="header-left">
+          <div class="logo-mini">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 11a9 9 0 0 1 9 9"></path>
+              <path d="M4 4a16 16 0 0 1 16 16"></path>
+              <circle cx="5" cy="19" r="1" fill="currentColor"></circle>
+            </svg>
+          </div>
+          <span class="header-title">UnSocial</span>
+          <span class="status-indicator online" title="Mac Mini online"></span>
+        </div>
+
+        <div class="header-right">
+          <button id="btn-logout" class="btn-header-action" title="Sign Out">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Platform Session Status Strip -->
+      <div class="platform-strip" id="platform-strip">
+        <div class="platform-badge-item" id="pbadge-reddit">
+          <span class="platform-dot"></span>
+          <span class="platform-name">Reddit</span>
+        </div>
+        <div class="platform-badge-item" id="pbadge-twitter">
+          <span class="platform-dot"></span>
+          <span class="platform-name">Twitter/X</span>
+        </div>
+        <div class="platform-badge-item" id="pbadge-instagram">
+          <span class="platform-dot"></span>
+          <span class="platform-name">Instagram</span>
+        </div>
+        <div class="platform-badge-item" id="pbadge-facebook">
+          <span class="platform-dot"></span>
+          <span class="platform-name">Facebook</span>
+        </div>
+        <div class="platform-badge-item" id="pbadge-linkedin">
+          <span class="platform-dot"></span>
+          <span class="platform-name">LinkedIn</span>
+        </div>
+      </div>
+
+      <!-- Main Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button type="button" class="tab-button active" data-tab="tab-add">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>Add Feed</span>
+        </button>
+        <button type="button" class="tab-button" data-tab="tab-feeds">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 11a9 9 0 0 1 9 9"></path>
+            <path d="M4 4a16 16 0 0 1 16 16"></path>
+            <circle cx="5" cy="19" r="1" fill="currentColor"></circle>
+          </svg>
+          <span>Feeds (<span id="feeds-count-badge">0</span>)</span>
+        </button>
+      </nav>
+
+      <!-- ── Tab: Add Feed ────────────────────────────────────────────────── -->
+      <main id="tab-add" class="tab-pane active">
+        <!-- Section: Method Picker -->
+        <div class="add-modes">
+          <button type="button" class="mode-pill active" data-mode="quick">⚡ Quick URL</button>
+          <button type="button" class="mode-pill" data-mode="reddit">🔥 Reddit Builder</button>
+          <button type="button" class="mode-pill" data-mode="custom">🌐 Custom Site</button>
+        </div>
+
+        <!-- Mode 1: Quick Add -->
+        <section id="mode-quick" class="mode-section active">
+          <div class="card">
+            <div class="card-title">Paste Any URL</div>
+            <p class="card-desc">Add Reddit subreddits, Twitter/X profiles, Instagram, Facebook pages, LinkedIn companies, or .txt changelogs.</p>
+            
+            <form id="form-quick-add">
+              <div class="input-with-button">
+                <input type="url" id="quick-url-input" class="input-field" placeholder="https://x.com/username or r/news" required spellcheck="false" />
+                <button type="submit" id="btn-quick-add" class="btn btn-primary">
+                  <span>Add</span>
+                  <span class="spinner" style="display: none;"></span>
+                </button>
+              </div>
+            </form>
+
+            <div id="quick-add-status" class="status-msg" style="display:none;"></div>
+          </div>
+        </section>
+
+        <!-- Mode 2: Reddit Feed Builder -->
+        <section id="mode-reddit" class="mode-section" style="display: none;">
+          <div class="card reddit-builder-card">
+            <div class="card-header-with-badge">
+              <div class="card-title">Reddit Feed Builder</div>
+              <span class="badge badge-reddit">Reddit</span>
+            </div>
+
+            <!-- Reddit Sub-tabs -->
+            <div class="reddit-type-tabs">
+              <button type="button" class="reddit-tab active" data-rtype="subreddit">Subreddit</button>
+              <button type="button" class="reddit-tab" data-rtype="search">Search</button>
+              <button type="button" class="reddit-tab" data-rtype="user">User</button>
+              <button type="button" class="reddit-tab" data-rtype="direct">Direct URL</button>
+            </div>
+
+            <!-- Subreddit View -->
+            <div id="reddit-view-subreddit" class="reddit-view active">
+              <div class="form-group">
+                <label for="reddit-sub-name">Subreddit</label>
+                <div class="prefix-input">
+                  <span class="input-prefix">r/</span>
+                  <input type="text" id="reddit-sub-name" class="input-field" placeholder="technology" spellcheck="false" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Sort By</label>
+                <div class="pill-group" id="reddit-sub-sort-pills">
+                  <button type="button" class="pill active" data-sort="hot">Hot</button>
+                  <button type="button" class="pill" data-sort="top">Top</button>
+                  <button type="button" class="pill" data-sort="new">New</button>
+                  <button type="button" class="pill" data-sort="rising">Rising</button>
+                </div>
+              </div>
+
+              <div class="form-group" id="reddit-sub-timeframe-group" style="display: none;">
+                <label>Top Timeframe</label>
+                <div class="pill-group" id="reddit-sub-timeframe-pills">
+                  <button type="button" class="pill active" data-time="day">Day</button>
+                  <button type="button" class="pill" data-time="week">Week</button>
+                  <button type="button" class="pill" data-time="month">Month</button>
+                  <button type="button" class="pill" data-time="year">Year</button>
+                  <button type="button" class="pill" data-time="all">All</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="reddit-flair-input">Filter by Flair (optional)</label>
+                <input type="text" id="reddit-flair-input" class="input-field" placeholder="News, Discussion (comma separated)" spellcheck="false" />
+              </div>
+
+              <div class="form-group">
+                <label for="reddit-keyword-input">Filter by Keywords (optional)</label>
+                <input type="text" id="reddit-keyword-input" class="input-field" placeholder="AI, release, update (comma separated)" spellcheck="false" />
+              </div>
+            </div>
+
+            <!-- Search View -->
+            <div id="reddit-view-search" class="reddit-view" style="display: none;">
+              <div class="form-group">
+                <label for="reddit-search-sub">Subreddit (optional)</label>
+                <div class="prefix-input">
+                  <span class="input-prefix">r/</span>
+                  <input type="text" id="reddit-search-sub" class="input-field" placeholder="all or subreddit" spellcheck="false" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="reddit-search-query">Search Query</label>
+                <input type="text" id="reddit-search-query" class="input-field" placeholder="e.g. quantum computing" spellcheck="false" />
+              </div>
+
+              <div class="form-group">
+                <label>Sort By</label>
+                <div class="pill-group" id="reddit-search-sort-pills">
+                  <button type="button" class="pill active" data-sort="relevance">Relevance</button>
+                  <button type="button" class="pill" data-sort="hot">Hot</button>
+                  <button type="button" class="pill" data-sort="top">Top</button>
+                  <button type="button" class="pill" data-sort="new">New</button>
+                </div>
+              </div>
+
+              <div class="form-group" id="reddit-search-timeframe-group" style="display: none;">
+                <label>Timeframe</label>
+                <div class="pill-group" id="reddit-search-timeframe-pills">
+                  <button type="button" class="pill active" data-time="all">All</button>
+                  <button type="button" class="pill" data-time="year">Year</button>
+                  <button type="button" class="pill" data-time="month">Month</button>
+                  <button type="button" class="pill" data-time="week">Week</button>
+                  <button type="button" class="pill" data-time="day">Day</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- User View -->
+            <div id="reddit-view-user" class="reddit-view" style="display: none;">
+              <div class="form-group">
+                <label for="reddit-user-name">Username</label>
+                <div class="prefix-input">
+                  <span class="input-prefix">u/</span>
+                  <input type="text" id="reddit-user-name" class="input-field" placeholder="username" spellcheck="false" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Sort By</label>
+                <div class="pill-group" id="reddit-user-sort-pills">
+                  <button type="button" class="pill active" data-sort="new">New</button>
+                  <button type="button" class="pill" data-sort="hot">Hot</button>
+                  <button type="button" class="pill" data-sort="top">Top</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Direct URL View -->
+            <div id="reddit-view-direct" class="reddit-view" style="display: none;">
+              <div class="form-group">
+                <label for="reddit-direct-url">Reddit URL</label>
+                <input type="url" id="reddit-direct-url" class="input-field" placeholder="https://www.reddit.com/r/..." spellcheck="false" />
+              </div>
+            </div>
+
+            <!-- Common Reddit Options -->
+            <div class="form-group form-check-row">
+              <label class="toggle-switch">
+                <input type="checkbox" id="reddit-direct-link" />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label">Direct Media Link (open external video/article directly in RSS reader)</span>
+            </div>
+
+            <div class="form-group">
+              <label for="reddit-custom-alias">Feed Name (optional)</label>
+              <input type="text" id="reddit-custom-alias" class="input-field" placeholder="My Tech News" spellcheck="false" />
+            </div>
+
+            <button type="button" id="btn-submit-reddit" class="btn btn-primary btn-block">
+              <span>Create Reddit Feed</span>
+              <span class="spinner" style="display: none;"></span>
+            </button>
+
+            <div id="reddit-builder-status" class="status-msg" style="display:none;"></div>
+          </div>
+        </section>
+
+        <!-- Mode 3: Interactive Custom Website Studio -->
+        <section id="mode-custom" class="mode-section" style="display: none;">
+          <!-- Step A: Enter URL -->
+          <div id="custom-step-url" class="card">
+            <div class="card-title">Custom Website Visual Studio</div>
+            <p class="card-desc">Enter any website URL. Your Mac Mini will render it in Electron with full session support, and let you tap to select repeating items.</p>
+            
+            <form id="form-custom-start">
+              <div class="input-with-button">
+                <input type="url" id="custom-target-url" class="input-field" placeholder="https://news.ycombinator.com" required spellcheck="false" />
+                <button type="submit" id="btn-custom-start" class="btn btn-primary">
+                  <span>Load Site</span>
+                  <span class="spinner" style="display: none;"></span>
+                </button>
+              </div>
+            </form>
+            <div id="custom-start-status" class="status-msg" style="display:none;"></div>
+          </div>
+
+          <!-- Step B: Visual Tap-to-Select Studio -->
+          <div id="custom-step-interactive" class="card custom-studio-card" style="display: none;">
+            <div class="studio-header">
+              <div class="studio-page-info">
+                <strong id="studio-page-title">Page Title</strong>
+                <span id="studio-page-url" class="text-muted">https://example.com</span>
+              </div>
+              <button type="button" id="btn-custom-cancel" class="btn btn-outline btn-sm">Cancel</button>
+            </div>
+
+            <!-- Helper Instructions Banner -->
+            <div class="studio-banner">
+              🎯 <b>Tap on an article, headline, or card below</b> to track it in your RSS feed.
+            </div>
+
+            <!-- Auto-candidate suggestions (if any) -->
+            <div id="studio-candidates-row" class="candidates-row" style="display: none;">
+              <span class="candidates-label">Suggested:</span>
+              <div id="studio-candidates-list" class="candidates-pills"></div>
+            </div>
+
+            <!-- Interactive Canvas / Viewport Container -->
+            <div class="canvas-viewport" id="canvas-viewport">
+              <div class="canvas-wrapper" id="canvas-wrapper">
+                <img id="studio-screenshot" class="studio-img" alt="Rendered page preview" />
+                <div id="touch-marker" class="touch-marker" style="display: none;"></div>
+              </div>
+              <div id="studio-loader" class="canvas-loader" style="display: none;">
+                <span class="spinner-large"></span>
+                <span id="studio-loader-text">Analyzing element…</span>
+              </div>
+            </div>
+
+            <!-- Selection Bottom Sheet / Drawer -->
+            <div id="selection-drawer" class="selection-drawer" style="display: none;">
+              <div class="drawer-header">
+                <div class="drawer-title">
+                  <span class="badge badge-success" id="drawer-match-count">✓ 0 Items</span>
+                  <code id="drawer-selector-display" class="drawer-selector">article</code>
+                </div>
+                <div class="drawer-actions">
+                  <button type="button" id="btn-scroll-page" class="btn btn-outline btn-sm" title="Scroll down to load more lazy items">
+                    📜 Scroll More
+                  </button>
+                </div>
+              </div>
+
+              <!-- Items preview -->
+              <div class="drawer-preview-list" id="drawer-items-preview"></div>
+
+              <div class="drawer-footer">
+                <div class="form-group mb-2">
+                  <label for="custom-feed-name">Feed Name</label>
+                  <input type="text" id="custom-feed-name" class="input-field" placeholder="My Custom Feed" />
+                </div>
+                <button type="button" id="btn-confirm-custom-feed" class="btn btn-primary btn-block">
+                  <span>Create RSS Feed</span>
+                  <span class="spinner" style="display: none;"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ── Tab: Feeds List ──────────────────────────────────────────────── -->
+      <main id="tab-feeds" class="tab-pane">
+        <div class="feeds-header-row">
+          <span class="feeds-count-label" id="feeds-list-title">Active Feeds</span>
+          <button type="button" id="btn-refresh-all-feeds" class="btn btn-outline btn-sm">
+            <span>↻ Refresh All</span>
+            <span class="spinner" style="display: none;"></span>
+          </button>
+        </div>
+
+        <!-- Category Tabs & Search Bar -->
+        <div class="feed-tabs-bar" id="feed-tabs-bar" style="display: none;">
+          <div class="feed-search-wrap" id="feed-search-wrap">
+            <svg class="feed-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              id="feed-search-input"
+              class="feed-search-input"
+              placeholder="Search subscribed feeds…"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Search subscribed feeds"
+            />
+            <button type="button" class="btn-clear-search" id="btn-clear-search" title="Clear search" aria-label="Clear search" style="display: none;">✕</button>
+          </div>
+
+          <div class="feed-category-tabs" id="feed-category-tabs"></div>
+        </div>
+
+        <div id="feeds-list-container" class="feeds-grid">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </main>
+    </div>
+
+    <!-- ── Toast Notifications ─────────────────────────────────────────────── -->
+    <div id="toast" class="toast-popup" style="display: none;"></div>
+
+  </div>
+
+  <script src="remote-assets/app.js"></script>
+</body>
+</html>

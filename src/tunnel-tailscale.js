@@ -307,14 +307,15 @@ async function startTunnel(store) {
   const port = store.get('serverPort');
   setStatus('starting');
   tunnelLog = [];
-  appendLog(`[tailscale] funnel --bg ${port}`);
+  appendLog(`[tailscale] funnel --bg --set-path /remote ${port}`);
+  appendLog(`[tailscale] funnel --bg --set-path /feed ${port}`);
 
-  // Reset any stale funnel config first so we don't pile up forwards across
-  // port changes. This mirrors cloudflared's "cleanup" step.
-  const reset = await runCommand(['funnel', 'reset']);
-  if (reset.output) appendLog(`[reset] ${reset.output}`);
+  // Only turn off our specific /remote and /feed forwards first so we don't clobber other services (e.g. /reader)
+  await runCommand(['serve', '--set-path', '/remote', 'off']);
+  await runCommand(['serve', '--set-path', '/feed', 'off']);
 
-  const r = await runCommand(['funnel', '--bg', String(port)], { timeoutMs: 30000 });
+  await runCommand(['funnel', '--bg', '--set-path', '/remote', String(port)], { timeoutMs: 30000 });
+  const r = await runCommand(['funnel', '--bg', '--set-path', '/feed', String(port)], { timeoutMs: 30000 });
   appendLog(r.output || (r.success ? 'Funnel started' : 'Funnel failed'));
 
   if (!r.success) {
@@ -330,15 +331,16 @@ async function startTunnel(store) {
 }
 
 /**
- * Stop Funnel by clearing all funnel configuration for this node.
+ * Stop Funnel for /remote and /feed without clearing other node configurations.
  */
 async function stopTunnel() {
   desiredState = 'stopped';
   clearReconnectTimer();
   stopPolling();
   retryCount = 0;
-  const r = await runCommand(['funnel', 'reset']);
-  appendLog(r.output || 'Funnel reset');
+  await runCommand(['serve', '--set-path', '/remote', 'off']);
+  await runCommand(['serve', '--set-path', '/feed', 'off']);
+  appendLog('Funnel /remote and /feed stopped');
   setStatus('stopped');
 }
 

@@ -811,7 +811,13 @@ async function injectSelector(win) {
   } catch (_) { }
 }
 
-module.exports = { startCustomWizard, scrapeCustomSiteHeadless };
+module.exports = {
+  startCustomWizard,
+  scrapeCustomSiteHeadless,
+  EXTRACT_ITEM_JS,
+  buildProfileData,
+  deriveFeedName,
+};
 
 // ── Scroll Step Injection ──────────────────────────────────────────────────
 

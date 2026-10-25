@@ -106,6 +106,10 @@ const store = new Store({
     tunnelAutoStart: false,
     feedToken: '',   // When non-empty, all feed-server requests require this token
     feedPublicBaseUrl: '', // Optional origin for RSS/Atom self-links (LAN / port proxy); empty = localhost
+    remoteUsername: 'admin',
+    remotePassword: '',
+    remoteWebUrl: '',
+    remoteWebEnabled: true,
     windowState: {
       width: 960,
       height: 700,
@@ -116,6 +120,13 @@ const store = new Store({
     },
   }
 });
+
+if (!store.get('remotePassword')) {
+  store.set('remotePassword', crypto.randomBytes(6).toString('hex'));
+}
+if (!store.get('remoteUsername')) {
+  store.set('remoteUsername', 'admin');
+}
 
 let mainWindow = null;
 let loginWindow = null;
@@ -480,7 +491,14 @@ app.whenReady().then(async () => {
 
   createMainWindow();
   createTray();
-  startFeedServer(store);
+  startFeedServer(store, {
+    addFeed: (input) => addFeedCore(input),
+    saveCustomFeed: (data) => saveCustomFeedCore(data),
+    refreshFeed: (username, platform) => refreshFeedCore(username, platform),
+    refreshAll: () => refreshAllCore(),
+    checkPlatforms: () => checkAllPlatforms(),
+    renameFeed: (username, platform, newAlias, filterKeywords) => renameFeedCore(username, platform, newAlias, filterKeywords),
+  });
   startInternetMonitor();
   startStaleFeedMonitor();
   scheduleNextRefresh();
@@ -1255,6 +1273,16 @@ async function checkRedditLoginStatus() {
   }
 }
 
+async function checkAllPlatforms() {
+  return {
+    instagram: await checkLoginStatus(),
+    twitter: await checkTwitterLoginStatus(),
+    facebook: await checkFacebookLoginStatus(),
+    linkedin: await checkLinkedInLoginStatus(),
+    reddit: await checkRedditLoginStatus(),
+  };
+}
+
 // ── IPC Handlers ───────────────────────────────────────────────────────────
 
 // Instagram auth
@@ -1353,7 +1381,7 @@ ipcMain.handle('get-feeds', () => {
   return store.get('feeds');
 });
 
-ipcMain.handle('add-feed', async (_e, input) => {
+async function addFeedCore(input) {
   let parsed;
   if (typeof input === 'object' && input !== null) {
     const rawUrl = (input.targetUrl || input.fullUrl || input.url || '').trim();
@@ -1452,7 +1480,7 @@ ipcMain.handle('add-feed', async (_e, input) => {
     fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' ? (typeof input === 'string' ? input : parsed.fullUrl) : null),
     alias: parsed.alias || username,
     directExternalLink: Boolean(parsed.directExternalLink),
-    filterKeywords: [],
+    filterKeywords: parsed.filterKeywords || [],
     lastChecked: new Date().toISOString(),
     postCount: profileData.posts.length,
     latestPostDate,
@@ -1471,15 +1499,21 @@ ipcMain.handle('add-feed', async (_e, input) => {
     entry.postCount = genResultAdd.postCount;
     store.set('feeds', feeds);
   }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+
   return entry;
+}
+
+ipcMain.handle('add-feed', async (_e, input) => {
+  return await addFeedCore(input);
 });
 
 // ── Custom Website Feed (wizard-based) ─────────────────────────────────────
 
-async function handleAddCustomFeed(parsed) {
-  const result = await startCustomWizard(parsed.fullUrl, mainWindow);
-  const { pageUrl, selector, feedName, scrollSelector, scrollCount, profileData } = result;
-
+async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector, scrollCount, profileData }) {
   if (!profileData || profileData.posts.length < 1) {
     throw new Error('No items were found. Try clicking on a different element.');
   }
@@ -1490,7 +1524,7 @@ async function handleAddCustomFeed(parsed) {
   const feeds = store.get('feeds');
 
   // Prevent exact duplicate custom URL tracking while allowing multiple feeds from the same domain.
-  const normalizedPageUrl = normalizeUrlForComparison(pageUrl || parsed.fullUrl);
+  const normalizedPageUrl = normalizeUrlForComparison(pageUrl);
   if (feeds.find((f) =>
     f.platform === 'custom' && normalizeUrlForComparison(f.fullUrl || f.url) === normalizedPageUrl
   )) {
@@ -1498,7 +1532,7 @@ async function handleAddCustomFeed(parsed) {
   }
 
   // Keep a stable internal username (ID) derived from URL, not display feedName.
-  const baseUsername = (parsed.username || feedName)
+  const baseUsername = (feedName || 'custom-feed')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom-feed';
   const username = ensureUniqueCustomUsername(baseUsername, feeds, normalizedPageUrl);
 
@@ -1539,7 +1573,17 @@ async function handleAddCustomFeed(parsed) {
     entry.postCount = genResultCustom.postCount;
     store.set('feeds', feeds);
   }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+
   return entry;
+}
+
+async function handleAddCustomFeed(parsed) {
+  const result = await startCustomWizard(parsed.fullUrl, mainWindow);
+  return await saveCustomFeedCore({ ...result, pageUrl: result.pageUrl || parsed.fullUrl });
 }
 
 function normalizeUrlForComparison(rawUrl) {
@@ -1605,7 +1649,7 @@ ipcMain.handle('toggle-feed-boost', (_e, username, platform) => {
   return feeds[idx];
 });
 
-ipcMain.handle('rename-feed', async (_e, username, platform, newAlias, filterKeywords) => {
+async function renameFeedCore(username, platform, newAlias, filterKeywords) {
   const fs = require('fs');
   const feedDir = require('./rss-generator').getFeedDir();
   const currentFeeds = store.get('feeds');
@@ -1724,7 +1768,15 @@ ipcMain.handle('rename-feed', async (_e, username, platform, newAlias, filterKey
     }
   }
 
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+
   return store.get('feeds');
+}
+
+ipcMain.handle('rename-feed', (_e, username, platform, newAlias, filterKeywords) => {
+  return renameFeedCore(username, platform, newAlias, filterKeywords);
 });
 
 ipcMain.handle('remove-feed', (_e, username, platform) => {
@@ -1735,7 +1787,7 @@ ipcMain.handle('remove-feed', (_e, username, platform) => {
   return feeds;
 });
 
-ipcMain.handle('refresh-feed', async (_e, username, platform) => {
+async function refreshFeedCore(username, platform) {
   platform = platform || 'instagram';
   let profileData;
   try {
@@ -1797,10 +1849,19 @@ ipcMain.handle('refresh-feed', async (_e, username, platform) => {
     return f;
   });
   store.set('feeds', feeds);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+
   return feeds.find((f) => f.username === username && (f.platform || 'instagram') === platform);
+}
+
+ipcMain.handle('refresh-feed', async (_e, username, platform) => {
+  return await refreshFeedCore(username, platform);
 });
 
-ipcMain.handle('refresh-all', async () => {
+async function refreshAllCore() {
   const feedsSnapshot = store.get('feeds');
   const results = [];
 
@@ -1852,7 +1913,15 @@ ipcMain.handle('refresh-all', async () => {
     }
   }
 
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+
   return results;
+}
+
+ipcMain.handle('refresh-all', async () => {
+  return await refreshAllCore();
 });
 
 ipcMain.handle('toggle-reddit-direct-link', async (_e, username, platform = 'reddit') => {
@@ -2080,6 +2149,66 @@ ipcMain.handle('set-feed-public-base-url', (_e, raw) => {
 
 ipcMain.handle('get-resolved-feed-base-url', () => {
   return resolveFeedBaseUrl(store);
+});
+
+// ── Remote Web Access IPC Handlers ─────────────────────────────────────────
+
+ipcMain.handle('get-remote-auth-settings', async () => {
+  const username = store.get('remoteUsername') || 'admin';
+  const password = store.get('remotePassword') || '';
+  const customWebUrl = store.get('remoteWebUrl') || '';
+  const port = store.get('serverPort') || 3845;
+  const feedPublicBase = store.get('feedPublicBaseUrl') || '';
+
+  let tunnelUrl = '';
+  try {
+    tunnelUrl = await tunnel.getPublicUrl(store);
+  } catch (_) {}
+
+  let defaultUrl = '';
+  if (tunnelUrl) {
+    defaultUrl = `${tunnelUrl.replace(/\/+$/, '')}/remote`;
+  } else if (feedPublicBase) {
+    defaultUrl = `${feedPublicBase.replace(/\/+$/, '')}/remote`;
+  } else {
+    defaultUrl = `http://localhost:${port}/remote`;
+  }
+
+  const bestUrl = customWebUrl || defaultUrl;
+
+  return {
+    username,
+    password,
+    webUrl: bestUrl,
+    customWebUrl,
+    defaultWebUrl: defaultUrl,
+    tunnelProvider: tunnel.getProviderId(store),
+  };
+});
+
+ipcMain.handle('set-remote-auth-settings', (_e, settings) => {
+  if (settings && typeof settings === 'object') {
+    if (settings.username && typeof settings.username === 'string') {
+      store.set('remoteUsername', settings.username.trim());
+    }
+    if (settings.password && typeof settings.password === 'string') {
+      store.set('remotePassword', settings.password.trim());
+    }
+    if (typeof settings.webUrl === 'string') {
+      store.set('remoteWebUrl', settings.webUrl.trim());
+    }
+  }
+  return {
+    username: store.get('remoteUsername') || 'admin',
+    password: store.get('remotePassword') || '',
+    webUrl: store.get('remoteWebUrl') || '',
+  };
+});
+
+ipcMain.handle('generate-remote-password', () => {
+  const newPass = crypto.randomBytes(6).toString('hex');
+  store.set('remotePassword', newPass);
+  return newPass;
 });
 
 // ── Notification IPC Handlers ─────────────────────────────────────────────
