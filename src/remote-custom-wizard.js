@@ -68,6 +68,43 @@ const REMOTE_INJECT_JS = `
     });
   };
 
+  window.__unsocial.getStructuralSelector = function(el) {
+    var direct = window.__unsocial.getSimpleSelector(el);
+    if (direct) return direct;
+
+    var parts = [];
+    var cur = el;
+    var depth = 0;
+    while (cur && cur !== document.body && cur !== document.documentElement && depth < 8) {
+      var simple = window.__unsocial.getSimpleSelector(cur);
+      if (simple && document.querySelectorAll(simple).length === 1) {
+        parts.unshift(simple);
+        var candidate = parts.join(' > ');
+        try { if (document.querySelectorAll(candidate).length === 1) return candidate; } catch(e) {}
+        break;
+      }
+      var p = cur.parentElement;
+      if (!p) break;
+      var tag = cur.tagName.toLowerCase();
+      var sameTagSibs = Array.from(p.children).filter(function(c) { return c.tagName === cur.tagName; });
+      if (sameTagSibs.length > 1) {
+        var idx = sameTagSibs.indexOf(cur) + 1;
+        parts.unshift(tag + ':nth-of-type(' + idx + ')');
+      } else {
+        parts.unshift(tag);
+      }
+      var candidatePath = parts.join(' > ');
+      try { if (document.querySelectorAll(candidatePath).length === 1) return candidatePath; } catch(e) {}
+      cur = p;
+      depth++;
+    }
+    if (parts.length > 0) {
+      var full = 'body > ' + parts.join(' > ');
+      try { if (document.querySelectorAll(full).length === 1) return full; } catch(e) {}
+    }
+    return null;
+  };
+
   window.__unsocial.getSimpleSelector = function(el) {
     if (el.id) return '#' + CSS.escape(el.id);
     var testId = el.getAttribute('data-testid');
@@ -182,17 +219,47 @@ const REMOTE_INJECT_JS = `
         }
 
         // Strategy 3: parent > tag
-        var parentSel = window.__unsocial.getSimpleSelector(parent);
+        var parentSel = window.__unsocial.getSimpleSelector(parent) || window.__unsocial.getStructuralSelector(parent);
         if (parentSel) {
           var sel = parentSel + ' > ' + tag.toLowerCase();
           try {
             var matches = document.querySelectorAll(sel);
             if (matches.length >= 2 && matches.length <= 500) {
-              if (!bestResult || matches.length <= bestResult.count) {
-                bestResult = { container: current, selector: sel, count: matches.length };
+              var isCellInRow = /^(TD|TH)$/.test(tag) && parent.tagName === 'TR' && parent.parentElement &&
+                Array.from(parent.parentElement.children).filter(function(r) { return r.tagName === 'TR'; }).length >= 2;
+              if (!isCellInRow) {
+                if (!bestResult || matches.length <= bestResult.count) {
+                  bestResult = { container: current, selector: sel, count: matches.length };
+                }
+                var hasLink3 = (current.tagName === 'A' && (current.hasAttribute('href') || current.href)) || !!current.querySelector('a[href]');
+                if (hasLink3) {
+                  return bestResult;
+                }
               }
             }
           } catch(e) {}
+        }
+
+        // Strategy 3b: table structures — when parent is TBODY/THEAD/TFOOT
+        if (/^(TBODY|THEAD|TFOOT)$/.test(parent.tagName)) {
+          var tableEl = parent.parentElement;
+          if (tableEl && tableEl.tagName === 'TABLE') {
+            var tableSel = window.__unsocial.getSimpleSelector(tableEl) || window.__unsocial.getStructuralSelector(tableEl);
+            if (tableSel) {
+              var sel = tableSel + ' > ' + parent.tagName.toLowerCase() + ' > ' + tag.toLowerCase();
+              try {
+                var matches = document.querySelectorAll(sel);
+                if (matches.length >= 2 && matches.length <= 500) {
+                  if (!bestResult || matches.length <= bestResult.count) {
+                    bestResult = { container: current, selector: sel, count: matches.length };
+                  }
+                  if (current.querySelector('a[href]')) {
+                    return bestResult;
+                  }
+                }
+              } catch(e) {}
+            }
+          }
         }
       }
 

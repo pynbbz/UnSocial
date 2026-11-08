@@ -425,6 +425,10 @@ const EXTRACT_ITEM_JS = `
     var timeEl2 = el.querySelector('time, [class*="date" i], [itemprop="startDate"]');
     if (timeEl2) {
       item.date = timeEl2.getAttribute('datetime') || timeEl2.getAttribute('content') || timeEl2.innerText.trim();
+    } else {
+      // Fallback: check if the element text contains a clear YYYY-MM-DD or DD/MM/YYYY date
+      var dateMatch = el.innerText.match(/\\b(\\d{4}-\\d{2}-\\d{2})\\b/);
+      if (dateMatch) item.date = dateMatch[1];
     }
   }
 
@@ -653,14 +657,24 @@ async function injectSelector(win) {
             }
 
             // Strategy 3: parent > tag (direct child)
-            var parentSel = getSimpleSelector(parent);
+            var parentSel = getSimpleSelector(parent) || getStructuralSelector(parent);
             if (parentSel) {
               var sel = parentSel + ' > ' + tag.toLowerCase();
               try {
                 var matches = document.querySelectorAll(sel);
                 if (matches.length >= 2 && matches.length <= 500) {
-                  if (!bestResult || matches.length <= bestResult.count) {
-                    bestResult = { container: current, selector: sel, count: matches.length };
+                  // Only skip if current is a single-column cell (TD/TH) inside a multi-column row (TR)
+                  // where the row itself is the true repeating item
+                  var isCellInRow = /^(TD|TH)$/.test(tag) && parent.tagName === 'TR' && parent.parentElement &&
+                    Array.from(parent.parentElement.children).filter(function(r) { return r.tagName === 'TR'; }).length >= 2;
+                  if (!isCellInRow) {
+                    if (!bestResult || matches.length <= bestResult.count) {
+                      bestResult = { container: current, selector: sel, count: matches.length };
+                    }
+                    var hasLink3 = (current.tagName === 'A' && (current.hasAttribute('href') || current.href)) || !!current.querySelector('a[href]');
+                    if (hasLink3) {
+                      return bestResult;
+                    }
                   }
                 }
               } catch(e) { /* skip */ }
@@ -668,10 +682,10 @@ async function injectSelector(win) {
 
             // Strategy 3b: table structures — when parent is TBODY/THEAD/TFOOT
             // with no id/classes, try the grandparent TABLE for a selector
-            if (!parentSel && /^(TBODY|THEAD|TFOOT)$/.test(parent.tagName)) {
+            if (/^(TBODY|THEAD|TFOOT)$/.test(parent.tagName)) {
               var tableEl = parent.parentElement;
               if (tableEl && tableEl.tagName === 'TABLE') {
-                var tableSel = getSimpleSelector(tableEl);
+                var tableSel = getSimpleSelector(tableEl) || getStructuralSelector(tableEl);
                 if (tableSel) {
                   var sel = tableSel + ' > ' + parent.tagName.toLowerCase() + ' > ' + tag.toLowerCase();
                   try {
@@ -679,6 +693,9 @@ async function injectSelector(win) {
                     if (matches.length >= 2 && matches.length <= 500) {
                       if (!bestResult || matches.length <= bestResult.count) {
                         bestResult = { container: current, selector: sel, count: matches.length };
+                      }
+                      if (current.querySelector('a[href]')) {
+                        return bestResult;
                       }
                     }
                   } catch(e) { /* skip */ }
@@ -692,6 +709,44 @@ async function injectSelector(win) {
         }
 
         return bestResult;
+      }
+
+      function getStructuralSelector(el) {
+        var direct = getSimpleSelector(el);
+        if (direct) return direct;
+
+        // Build a unique nth-of-type path up to 8 levels deep (for classless nested tables/lists)
+        var parts = [];
+        var cur = el;
+        var depth = 0;
+        while (cur && cur !== document.body && cur !== document.documentElement && depth < 8) {
+          var simple = getSimpleSelector(cur);
+          if (simple && document.querySelectorAll(simple).length === 1) {
+            parts.unshift(simple);
+            var candidate = parts.join(' > ');
+            try { if (document.querySelectorAll(candidate).length === 1) return candidate; } catch(e) {}
+            break;
+          }
+          var p = cur.parentElement;
+          if (!p) break;
+          var tag = cur.tagName.toLowerCase();
+          var sameTagSibs = Array.from(p.children).filter(function(c) { return c.tagName === cur.tagName; });
+          if (sameTagSibs.length > 1) {
+            var idx = sameTagSibs.indexOf(cur) + 1;
+            parts.unshift(tag + ':nth-of-type(' + idx + ')');
+          } else {
+            parts.unshift(tag);
+          }
+          var candidatePath = parts.join(' > ');
+          try { if (document.querySelectorAll(candidatePath).length === 1) return candidatePath; } catch(e) {}
+          cur = p;
+          depth++;
+        }
+        if (parts.length > 0) {
+          var full = 'body > ' + parts.join(' > ');
+          try { if (document.querySelectorAll(full).length === 1) return full; } catch(e) {}
+        }
+        return null;
       }
 
       function getSimpleSelector(el) {
