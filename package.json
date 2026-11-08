@@ -1,6 +1,6 @@
 {
   "name": "unsocial",
-  "version": "2.0.7",
+  "version": "2.0.10",
   "description": "Social media to RSS Feed converter - Desktop App",
   "main": "src/main.js",
   "license": "MIT",
@@ -76,6 +76,9 @@
       "src/**/*",
       "assets/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "src/remote-web/**/*"
     ],
     "directories": {
       "output": "dist"

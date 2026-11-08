@@ -39,6 +39,8 @@ const REMOTE_INJECT_JS = `
   window.__unsocial = window.__unsocial || {};
 
   window.__unsocial.clearHighlights = function() {
+    var oldContainer = document.getElementById('__unsocial_highlights_container');
+    if (oldContainer) oldContainer.remove();
     document.querySelectorAll('[data-__unsocial-highlight]').forEach(function(el) {
       el.style.outline = '';
       el.style.outlineOffset = '';
@@ -53,10 +55,16 @@ const REMOTE_INJECT_JS = `
 
   window.__unsocial.highlightElements = function(els, color) {
     window.__unsocial.clearHighlights();
+    var c = color || '#4ade80';
     els.forEach(function(el) {
-      el.style.outline = '3px solid ' + (color || '#4ade80');
-      el.style.outlineOffset = '-2px';
-      el.dataset.__unsocialHighlight = '1';
+      var rect = el.getBoundingClientRect();
+      var targetEl = (rect.width < 10 || rect.height < 10) && el.children.length === 1 ? el.children[0] : el;
+      if (el.tagName === 'A' && window.getComputedStyle(el).display === 'inline' && el.children.length > 0) {
+        targetEl = el.children.length === 1 ? el.children[0] : el;
+      }
+      targetEl.style.outline = '3px solid ' + c;
+      targetEl.style.outlineOffset = '-2px';
+      targetEl.dataset.__unsocialHighlight = '1';
     });
   };
 
@@ -95,10 +103,13 @@ const REMOTE_INJECT_JS = `
 
       if (siblings.length >= 2) {
         // Strategy 1: data attributes
-        var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id'];
+        var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id', 'ng-repeat', 'data-ng-repeat'];
         for (var ai = 0; ai < dataAttrs.length; ai++) {
           var attr = dataAttrs[ai];
           var attrVal = current.getAttribute(attr);
+          if (attr === 'role' && /^(tabpanel|tab|tablist|region|main|navigation|banner|contentinfo|dialog|menu|menubar|presentation|none|group)$/i.test(attrVal || '')) {
+            continue;
+          }
           if (attrVal) {
             var siblingsWithAttr = siblings.filter(function(s) { return s.getAttribute(attr) === attrVal; });
             if (siblingsWithAttr.length >= 2) {
@@ -106,7 +117,9 @@ const REMOTE_INJECT_JS = `
               try {
                 var matches = document.querySelectorAll(sel);
                 if (matches.length >= 2 && matches.length <= 500) {
-                  return { container: current, selector: sel, count: matches.length };
+                  if (!bestResult) {
+                    return { container: current, selector: sel, count: matches.length };
+                  }
                 }
               } catch(e) {}
             }
@@ -116,7 +129,7 @@ const REMOTE_INJECT_JS = `
         // Strategy 2: stable classes
         var currentClasses = Array.from(current.classList);
         var stableClasses = currentClasses.filter(function(cls) {
-          return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[)/.test(cls);
+          return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-)/.test(cls);
         });
 
         if (stableClasses.length > 0) {
@@ -129,11 +142,26 @@ const REMOTE_INJECT_JS = `
             var sel = tag.toLowerCase() + '.' + sharedClasses.map(function(c) { return CSS.escape(c); }).join('.');
             try {
               var matches = document.querySelectorAll(sel);
+              if (matches.length > siblings.length) {
+                var parentSelForScope = window.__unsocial.getSimpleSelector(parent);
+                if (parentSelForScope) {
+                  var scopedCandidate = parentSelForScope + ' > ' + sel;
+                  try {
+                    var scopedCandidateMatches = document.querySelectorAll(scopedCandidate);
+                    if (scopedCandidateMatches.length >= 2 && scopedCandidateMatches.length <= 500) {
+                      sel = scopedCandidate;
+                      matches = scopedCandidateMatches;
+                    }
+                  } catch(eScope) {}
+                }
+              }
               if (matches.length >= 2 && matches.length <= 500) {
                 if (!bestResult || matches.length <= bestResult.count) {
                   bestResult = { container: current, selector: sel, count: matches.length };
                 }
-                if (current.querySelector('img') && current.querySelector('a[href]')) {
+                var hasLink = (current.tagName === 'A' && (current.hasAttribute('href') || current.href)) || !!current.querySelector('a[href]');
+                var hasImgOrHeading = !!current.querySelector('img') || !!current.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], [class*="-name" i]');
+                if (hasLink && hasImgOrHeading) {
                   return bestResult;
                 }
               }
@@ -422,9 +450,47 @@ async function scrollRemoteWizard(wizardId, { scrollCount = 1 }) {
 
   for (let i = 0; i < scrolls; i++) {
     await win.webContents.executeJavaScript(`
-      window.scrollBy({ top: 800, behavior: 'instant' });
+      (function() {
+        var scrolled = false;
+        var prevY = window.scrollY;
+        window.scrollBy({ top: 750, behavior: 'instant' });
+        if (window.scrollY > prevY) scrolled = true;
+        if (!scrolled) {
+          // Find the largest scrollable container (e.g. Angular Material md-content.main-wrapper)
+          var allEls = document.querySelectorAll('md-content, main, [class*="scroll" i], [class*="wrapper" i], [class*="content" i], div');
+          var bestEl = null;
+          var bestArea = 0;
+          for (var j = 0; j < allEls.length; j++) {
+            var el = allEls[j];
+            if (el === document.body || el === document.documentElement) continue;
+            if (el.scrollHeight > el.clientHeight + 50 && el.clientHeight > 200) {
+              var style = window.getComputedStyle(el);
+              if (style.overflowY === 'auto' || style.overflowY === 'scroll' || el.tagName === 'MD-CONTENT') {
+                var area = el.clientWidth * el.clientHeight;
+                if (area > bestArea) {
+                  bestArea = area;
+                  bestEl = el;
+                }
+              }
+            }
+          }
+          if (bestEl) {
+            bestEl.scrollBy({ top: 750, behavior: 'instant' });
+            window.__unsocial = window.__unsocial || {};
+            window.__unsocial.detectedScrollContainer = window.__unsocial.getSimpleSelector ? window.__unsocial.getSimpleSelector(bestEl) : null;
+          }
+        }
+      })();
     `);
     await sleep(1500);
+  }
+
+  // Record detected scroll container if any
+  const detectedScrollSel = await win.webContents.executeJavaScript(`
+    (window.__unsocial && window.__unsocial.detectedScrollContainer) || null
+  `).catch(() => null);
+  if (detectedScrollSel) {
+    session.scrollSelector = detectedScrollSel;
   }
 
   // If we already have a selector, re-extract and re-highlight
@@ -488,7 +554,7 @@ async function confirmRemoteWizard(wizardId, { feedName }) {
     pageUrl,
     selector,
     feedName: finalFeedName,
-    scrollSelector: null,
+    scrollSelector: session.scrollSelector || null,
     scrollCount,
     profileData,
   };

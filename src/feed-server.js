@@ -91,8 +91,12 @@ function startFeedServer(store, bridge = {}) {
     next();
   });
 
-  // Serve remote web static assets on both /remote-assets and /remote/remote-assets
-  const remoteWebDir = path.join(__dirname, 'remote-web');
+  // Serve remote web static assets on both /remote-assets and /remote/remote-assets.
+  // In packaged builds with asarUnpack, resolve to app.asar.unpacked to avoid temporary file extraction.
+  const unpackedWebDir = path.join(__dirname.replace(/app\.asar$/, 'app.asar.unpacked'), 'remote-web');
+  const remoteWebDir = fs.existsSync(unpackedWebDir)
+    ? unpackedWebDir
+    : path.join(__dirname, 'remote-web');
   const staticMiddleware = express.static(remoteWebDir);
   app.use('/remote-assets', staticMiddleware);
   app.use('/remote/remote-assets', staticMiddleware);

@@ -191,7 +191,31 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
               if (target) {
                 target.scrollBy({ top: target.clientHeight || 800, behavior: 'smooth' });
               } else {
+                var prevY = window.scrollY;
                 window.scrollBy({ top: window.innerHeight || 800, behavior: 'smooth' });
+                // Fallback if window doesn't scroll (e.g. Angular Material md-content.main-wrapper)
+                if (window.scrollY === prevY && document.documentElement.scrollHeight <= window.innerHeight + 50) {
+                  var allEls = document.querySelectorAll('md-content, main, [class*="scroll" i], [class*="wrapper" i], [class*="content" i], div');
+                  var bestEl = null;
+                  var bestArea = 0;
+                  for (var j = 0; j < allEls.length; j++) {
+                    var el = allEls[j];
+                    if (el === document.body || el === document.documentElement) continue;
+                    if (el.scrollHeight > el.clientHeight + 50 && el.clientHeight > 200) {
+                      var style = window.getComputedStyle(el);
+                      if (style.overflowY === 'auto' || style.overflowY === 'scroll' || el.tagName === 'MD-CONTENT') {
+                        var area = el.clientWidth * el.clientHeight;
+                        if (area > bestArea) {
+                          bestArea = area;
+                          bestEl = el;
+                        }
+                      }
+                    }
+                  }
+                  if (bestEl) {
+                    bestEl.scrollBy({ top: bestEl.clientHeight || 800, behavior: 'smooth' });
+                  }
+                }
               }
             })();
           `);
@@ -264,12 +288,23 @@ function buildProfileData(items, feedName, pageUrl) {
   const posts = (items || []).map((item, i) => ({
     id: item.link || `${pageUrl}#item-${i}`,
     shortcode: `item-${i}`,
-    caption: item.title || item.text || '(no title)',
+    title: item.title || '',
+    caption: item.text || item.title || '(no title)',
     timestamp: (function () {
       if (!item.date) return new Date().toISOString();
-      // Strip IANA timezone annotations like [America/Edmonton]
-      var cleaned = item.date.replace(/\[.*?\]/g, '').trim();
+      // Strip IANA timezone annotations like [America/Edmonton] and "@" symbols
+      var cleaned = item.date
+        .replace(/\[.*?\]/g, '')
+        .replace(/^(?:Starts|Ends):\s*/i, '')
+        .replace(/\s*@\s*/g, ' ')
+        .replace(/\b(\d{1,2})(?:st|nd|rd|th)\b/gi, '$1')
+        .replace(/\s+[A-Z]{2,4}$/, '') // strip trailing timezone abbr like MT, EST if Date.parse chokes on it
+        .trim();
       var d = new Date(cleaned);
+      if (isNaN(d.getTime())) {
+        // Fallback: try parsing without stripping trailing tz
+        d = new Date(item.date.replace(/\[.*?\]/g, '').replace(/\s*@\s*/g, ' ').trim());
+      }
       return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
     })(),
     timestampEstimated: !item.date,
@@ -294,20 +329,21 @@ const EXTRACT_ITEM_JS = `
   // Extract meaningful content from a single list-item element
   var item = { title: '', text: '', link: '', image: '', date: '' };
 
-  // ── Title: first heading, or bold text ──
-  var heading = el.querySelector('h1, h2, h3, h4, h5, h6');
+  // ── Title: first heading, title-like class, or bold text ──
+  var heading = el.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], [class*="-name" i], [class*="_name" i], [itemprop="name"]');
   var titleText = '';
-  if (heading) {
+  if (heading && heading.innerText.trim().length > 0 && heading.innerText.trim().length < 200) {
     titleText = heading.innerText.trim();
   } else {
     var bold = el.querySelector('b, strong');
     if (bold) titleText = bold.innerText.trim();
   }
 
-  // ── Link: score all <a> tags and pick the best one ──
-  // Instead of blindly grabbing the first <a>, we score each one so that
-  // title/topic links beat icon-only or navigation links.
+  // ── Link: score all <a> tags (including el itself if it is an <a>) and pick the best one ──
   var allLinks = Array.from(el.querySelectorAll('a[href]'));
+  if (el.tagName === 'A' && (el.hasAttribute('href') || el.href)) {
+    allLinks.unshift(el);
+  }
   var bestLink = null;
   var bestScore = -1;
 
@@ -319,6 +355,9 @@ const EXTRACT_ITEM_JS = `
     var score = 0;
     var aText = a.innerText.trim();
     var aClass = (a.className || '').toLowerCase();
+
+    // If the container element itself is the <a> wrapping the card, give it high priority
+    if (a === el) score += 75;
 
     // Highest priority: class name contains "title" (e.g. "topictitle")
     if (aClass.indexOf('title') !== -1) score += 100;
@@ -346,11 +385,17 @@ const EXTRACT_ITEM_JS = `
     }
   }
 
-  // Fallback: first <a> if nothing scored well
+  // Fallback: first <a> if nothing scored well, or closest ancestor <a[href]>
   if (!bestLink && allLinks.length > 0) {
     for (var fi = 0; fi < allLinks.length; fi++) {
       var fh = allLinks[fi].href;
       if (fh && !fh.startsWith('javascript:')) { bestLink = allLinks[fi]; break; }
+    }
+  }
+  if (!bestLink && el.closest) {
+    var parentLink = el.closest('a[href]');
+    if (parentLink && parentLink.href && !parentLink.href.startsWith('javascript:')) {
+      bestLink = parentLink;
     }
   }
 
@@ -358,29 +403,29 @@ const EXTRACT_ITEM_JS = `
     item.link = bestLink.href;
   }
 
-  // ── Title: prefer heading, then title-class link, then bold, then any link text ──
-  // If the best link has a title-related class (e.g. "topictitle"), its text
-  // should override bold/strong text (which may just be pagination numbers).
+  // ── Title: prefer heading, then title-class link, then bold, then first line of link/card text ──
   var bestLinkClass = bestLink ? (bestLink.className || '').toLowerCase() : '';
-  if (bestLink && bestLinkClass.indexOf('title') !== -1 && bestLink.innerText.trim().length > 0) {
+  if (bestLink && bestLink !== el && bestLinkClass.indexOf('title') !== -1 && bestLink.innerText.trim().length > 0) {
     item.title = bestLink.innerText.trim();
   } else if (titleText) {
     item.title = titleText;
   } else if (bestLink && bestLink.innerText.trim().length > 0) {
-    item.title = bestLink.innerText.trim();
+    item.title = bestLink.innerText.trim().split(/\\r?\\n/)[0].trim();
   }
 
-  // Image: first <img>
-  var img = el.querySelector('img[src]');
-  if (img) item.image = img.src;
+  // Image: first <img> (prefer src, fallback to currentSrc or data-src)
+  var img = el.querySelector('img[src], img[ng-src], img[data-src]');
+  if (img) item.image = img.currentSrc || img.src || img.getAttribute('data-src') || '';
 
-  // Date: <time> element or text matching date patterns
+  // Date: <time> element or element with date class
   var timeEl = el.querySelector('time[datetime]');
   if (timeEl) {
     item.date = timeEl.getAttribute('datetime');
   } else {
-    var timeEl2 = el.querySelector('time');
-    if (timeEl2) item.date = timeEl2.innerText.trim();
+    var timeEl2 = el.querySelector('time, [class*="date" i], [itemprop="startDate"]');
+    if (timeEl2) {
+      item.date = timeEl2.getAttribute('datetime') || timeEl2.getAttribute('content') || timeEl2.innerText.trim();
+    }
   }
 
   // Text: all remaining visible text (truncated)
@@ -500,7 +545,7 @@ async function injectSelector(win) {
       // ── Hover highlight ──
       var hoverOverlay = document.createElement('div');
       hoverOverlay.id = '__unsocial_hover';
-      hoverOverlay.style.cssText = 'position:absolute;pointer-events:none;z-index:2147483646;border:2px solid #e1306c;background:rgba(225,48,108,0.08);border-radius:4px;transition:all 0.1s ease;display:none;';
+      hoverOverlay.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;border:2px solid #e1306c;background:rgba(225,48,108,0.08);border-radius:4px;transition:all 0.1s ease;display:none;';
       document.body.appendChild(hoverOverlay);
 
       var selectedSelector = null;
@@ -522,11 +567,15 @@ async function injectSelector(win) {
           var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === tag; });
 
           if (siblings.length >= 2) {
-            // Strategy 1: data attributes shared among siblings (React, Next.js, etc.)
-            var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id'];
+            // Strategy 1: data attributes shared among siblings (React, Next.js, Angular, etc.)
+            var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id', 'ng-repeat', 'data-ng-repeat'];
             for (var ai = 0; ai < dataAttrs.length; ai++) {
               var attr = dataAttrs[ai];
               var attrVal = current.getAttribute(attr);
+              // Ignore generic layout/tab ARIA roles when we already found a tighter repeating item
+              if (attr === 'role' && /^(tabpanel|tab|tablist|region|main|navigation|banner|contentinfo|dialog|menu|menubar|presentation|none|group)$/i.test(attrVal || '')) {
+                continue;
+              }
               if (attrVal) {
                 var siblingsWithAttr = siblings.filter(function(s) { return s.getAttribute(attr) === attrVal; });
                 if (siblingsWithAttr.length >= 2) {
@@ -534,17 +583,19 @@ async function injectSelector(win) {
                   try {
                     var matches = document.querySelectorAll(sel);
                     if (matches.length >= 2 && matches.length <= 500) {
-                      return { container: current, selector: sel, count: matches.length };
+                      if (!bestResult) {
+                        return { container: current, selector: sel, count: matches.length };
+                      }
                     }
                   } catch(e) { /* invalid selector, skip */ }
                 }
               }
             }
 
-            // Strategy 2: shared CSS classes — filter out Tailwind state/responsive prefixes & escape
+            // Strategy 2: shared CSS classes — filter out Tailwind/Angular state & responsive prefixes
             var currentClasses = Array.from(current.classList);
             var stableClasses = currentClasses.filter(function(cls) {
-              return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[)/.test(cls);
+              return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-)/.test(cls);
             });
 
             if (stableClasses.length > 0) {
@@ -558,13 +609,29 @@ async function injectSelector(win) {
                 var sel = tag.toLowerCase() + '.' + sharedClasses.map(function(c) { return CSS.escape(c); }).join('.');
                 try {
                   var matches = document.querySelectorAll(sel);
+                  // Scope to parent if the class selector also leaks into hidden/other tabs or containers
+                  if (matches.length > siblings.length) {
+                    var parentSelForScope = getSimpleSelector(parent);
+                    if (parentSelForScope) {
+                      var scopedCandidate = parentSelForScope + ' > ' + sel;
+                      try {
+                        var scopedCandidateMatches = document.querySelectorAll(scopedCandidate);
+                        if (scopedCandidateMatches.length >= 2 && scopedCandidateMatches.length <= 500) {
+                          sel = scopedCandidate;
+                          matches = scopedCandidateMatches;
+                        }
+                      } catch(eScope) {}
+                    }
+                  }
                   if (matches.length >= 2 && matches.length <= 500) {
                     // Prefer results closer to the content (shallower = better containers)
                     if (!bestResult || matches.length <= bestResult.count) {
                       bestResult = { container: current, selector: sel, count: matches.length };
                     }
-                    // If this looks like a good card-level container (has image + text), return it
-                    if (current.querySelector('img') && current.querySelector('a[href]')) {
+                    // If this looks like a good card-level container (has image + link, or is itself an <a>), return it
+                    var hasLink = (current.tagName === 'A' && (current.hasAttribute('href') || current.href)) || !!current.querySelector('a[href]');
+                    var hasImgOrHeading = !!current.querySelector('img') || !!current.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], [class*="-name" i]');
+                    if (hasLink && hasImgOrHeading) {
                       return bestResult;
                     }
                   }
@@ -650,14 +717,25 @@ async function injectSelector(win) {
       }
 
       function highlightElements(els, color) {
+        clearHighlights();
         els.forEach(function(el) {
-          el.style.outline = '3px solid ' + color;
-          el.style.outlineOffset = '-2px';
-          el.dataset.__unsocialHighlight = '1';
+          var rect = el.getBoundingClientRect();
+          // If the matched element is an inline wrapper (e.g. <a> without display:block) wrapping a block card,
+          // apply the outline directly to its single block child so CSS outline renders cleanly and scrolls natively.
+          var targetEl = (rect.width < 10 || rect.height < 10) && el.children.length === 1 ? el.children[0] : el;
+          if (el.tagName === 'A' && window.getComputedStyle(el).display === 'inline' && el.children.length > 0) {
+            targetEl = el.children.length === 1 ? el.children[0] : el;
+          }
+          targetEl.style.outline = '3px solid ' + color;
+          targetEl.style.outlineOffset = '-2px';
+          targetEl.dataset.__unsocialHighlight = '1';
         });
       }
 
       function clearHighlights() {
+        var oldContainer = document.getElementById('__unsocial_highlights_container');
+        if (oldContainer) oldContainer.remove();
+
         document.querySelectorAll('[data-__unsocial-highlight]').forEach(function(el) {
           el.style.outline = '';
           el.style.outlineOffset = '';
@@ -682,8 +760,8 @@ async function injectSelector(win) {
 
         var rect = target.getBoundingClientRect();
         hoverOverlay.style.display = 'block';
-        hoverOverlay.style.left = (rect.left + window.scrollX) + 'px';
-        hoverOverlay.style.top = (rect.top + window.scrollY) + 'px';
+        hoverOverlay.style.left = rect.left + 'px';
+        hoverOverlay.style.top = rect.top + 'px';
         hoverOverlay.style.width = rect.width + 'px';
         hoverOverlay.style.height = rect.height + 'px';
       }
@@ -730,11 +808,11 @@ async function injectSelector(win) {
         // Hide hover overlay
         hoverOverlay.style.display = 'none';
 
+        // Scroll the clicked item into view first so bounding rects reflect final position
+        result.container.scrollIntoView({ behavior: 'instant', block: 'center' });
+
         // Highlight all found items
         highlightElements(selectedEls, '#4ade80');
-
-        // Scroll the clicked item into view
-        result.container.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
         // Update toolbar
         document.getElementById('__us_instructions').style.display = 'none';
@@ -833,6 +911,8 @@ async function injectScrollStep(win) {
       if (oldHover) oldHover.remove();
 
       // Clear any green outlines from the selector step
+      var oldHighlightsContainer = document.getElementById('__unsocial_highlights_container');
+      if (oldHighlightsContainer) oldHighlightsContainer.remove();
       document.querySelectorAll('[data-__unsocialhighlight]').forEach(function(el) {
         el.style.outline = ''; el.style.outlineOffset = ''; delete el.dataset.__unsocialhighlight;
       });
@@ -860,7 +940,7 @@ async function injectScrollStep(win) {
       // ── Hover overlay for scroll area selection ──
       var hoverOverlay = document.createElement('div');
       hoverOverlay.id = '__unsocial_hover';
-      hoverOverlay.style.cssText = 'position:absolute;pointer-events:none;z-index:2147483646;border:2px dashed #6366f1;background:rgba(99,102,241,0.08);border-radius:4px;transition:all 0.1s ease;display:none;';
+      hoverOverlay.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;border:2px dashed #6366f1;background:rgba(99,102,241,0.08);border-radius:4px;transition:all 0.1s ease;display:none;';
       document.body.appendChild(hoverOverlay);
 
       var scrollSelector = null;
@@ -916,8 +996,8 @@ async function injectScrollStep(win) {
 
         var rect = el.getBoundingClientRect();
         hoverOverlay.style.display = 'block';
-        hoverOverlay.style.left = (rect.left + window.scrollX) + 'px';
-        hoverOverlay.style.top = (rect.top + window.scrollY) + 'px';
+        hoverOverlay.style.left = rect.left + 'px';
+        hoverOverlay.style.top = rect.top + 'px';
         hoverOverlay.style.width = rect.width + 'px';
         hoverOverlay.style.height = rect.height + 'px';
       }
