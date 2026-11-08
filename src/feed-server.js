@@ -206,6 +206,18 @@ function startFeedServer(store, bridge = {}) {
     }
   });
 
+  app.get('/api/telegram/channels', requireWebAuth, async (_req, res) => {
+    try {
+      if (!bridge.listTelegramChannels) {
+        throw new Error('Telegram channel listing not available');
+      }
+      const channels = await bridge.listTelegramChannels();
+      res.json({ channels });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // ── Remote API: Feeds List ────────────────────────────────────────────────
   app.get('/api/feeds', requireWebAuth, (_req, res) => {
     const feeds = store.get('feeds') || [];

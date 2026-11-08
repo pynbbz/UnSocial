@@ -1514,6 +1514,41 @@ body {
   color: #ff5722;
 }
 
+.btn-telegram-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  border-color: rgba(38, 165, 228, 0.4);
+  color: #26A5E4;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-telegram-trigger:hover {
+  background: rgba(38, 165, 228, 0.12);
+  border-color: #26A5E4;
+  color: #38b6f5;
+}
+
+#telegram-modal .reddit-type-tab.is-active,
+#telegram-modal .btn-reddit-submit {
+  background: #26A5E4;
+  border-color: #26A5E4;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(38, 165, 228, 0.35);
+}
+
+#telegram-modal .btn-reddit-submit:hover {
+  background: #1d93cf;
+  border-color: #1d93cf;
+}
+
+#telegram-modal .reddit-input:focus {
+  border-color: #26A5E4;
+  box-shadow: 0 0 0 1px #26A5E4;
+}
+
 .reddit-modal-page {
   max-width: 620px;
 }

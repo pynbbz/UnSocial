@@ -28,6 +28,12 @@ contextBridge.exposeInMainWorld('api', {
   parseRedditUrl: (url) => ipcRenderer.invoke('parse-reddit-url', url),
   toggleRedditDirectLink: (username, platform) => ipcRenderer.invoke('toggle-reddit-direct-link', username, platform),
 
+  // Telegram Auth & Features (for Private Channels)
+  openTelegramLogin: () => ipcRenderer.invoke('open-telegram-login'),
+  checkTelegramLogin: () => ipcRenderer.invoke('check-telegram-login'),
+  logoutTelegram: () => ipcRenderer.invoke('logout-telegram'),
+  listTelegramChannels: () => ipcRenderer.invoke('list-telegram-channels'),
+
 
   // Force reset (nuclear option — clears ALL data for a platform)
   forceResetPlatform: (platform) => ipcRenderer.invoke('force-reset-platform', platform),

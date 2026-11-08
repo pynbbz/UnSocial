@@ -87,6 +87,7 @@ const { scrapeFacebookProfile } = require('./scraper-facebook');
 const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
+const { scrapeTelegramChannel, parseTelegramInput, listTelegramChannels } = require('./scraper-telegram');
 const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
@@ -407,6 +408,7 @@ async function refreshOldestFeed() {
     else if (platform === 'linkedin') profileData = await withTimeout(scrapeLinkedInProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'txt') profileData = await withTimeout(scrapeTxtFile(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'reddit') profileData = await withTimeout(scrapeReddit(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'telegram') profileData = await withTimeout(scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) }), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
@@ -498,6 +500,7 @@ app.whenReady().then(async () => {
     refreshAll: () => refreshAllCore(),
     checkPlatforms: () => checkAllPlatforms(),
     renameFeed: (username, platform, newAlias, filterKeywords) => renameFeedCore(username, platform, newAlias, filterKeywords),
+    listTelegramChannels: () => listTelegramChannels(),
   });
   startInternetMonitor();
   startStaleFeedMonitor();
@@ -618,6 +621,8 @@ app.whenReady().then(async () => {
               else if (plat === 'facebook') profileData = await scrapeFacebookProfile(feed.username, feed.subTab, feed.fullUrl);
               else if (plat === 'linkedin') profileData = await scrapeLinkedInProfile(feed.username);
               else if (plat === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
+              else if (plat === 'reddit') profileData = await scrapeReddit(feed.fullUrl || feed.url);
+              else if (plat === 'telegram') profileData = await scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) });
               else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
@@ -1152,6 +1157,74 @@ function openRedditLoginWindow() {
   });
 }
 
+let telegramLoginWindow = null;
+function openTelegramLoginWindow() {
+  if (telegramLoginWindow && !telegramLoginWindow.isDestroyed()) {
+    telegramLoginWindow.focus();
+    return;
+  }
+
+  telegramLoginWindow = new BrowserWindow({
+    width: 520,
+    height: 700,
+    parent: mainWindow,
+    modal: true,
+    title: 'Log into Telegram (for Private Channels)',
+    backgroundColor: '#1a1a2e',
+    webPreferences: {
+      partition: undefined,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  telegramLoginWindow.setMenuBarVisibility(false);
+  const chromeUA = getRealisticUserAgent();
+  telegramLoginWindow.webContents.session.setUserAgent(chromeUA);
+  telegramLoginWindow.webContents.setUserAgent(chromeUA);
+
+  telegramLoginWindow.loadURL('https://web.telegram.org/k/');
+
+  // Poll localStorage inside Telegram Web K to detect when QR/phone login completes
+  const authPollInterval = setInterval(async () => {
+    if (!telegramLoginWindow || telegramLoginWindow.isDestroyed()) {
+      clearInterval(authPollInterval);
+      return;
+    }
+    try {
+      const isAuthed = await telegramLoginWindow.webContents.executeJavaScript(`
+        (function() {
+          try {
+            const raw = localStorage.getItem('user_auth') || localStorage.getItem('account1');
+            if (!raw) return false;
+            const parsed = JSON.parse(raw);
+            return Boolean(parsed && (parsed.id || parsed.userId));
+          } catch (_) {
+            return false;
+          }
+        })()
+      `);
+      if (isAuthed) {
+        clearInterval(authPollInterval);
+        store.set('telegramLoggedIn', true);
+        resolveNotificationsBySubstring('Telegram session');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('login-status', { platform: 'telegram', loggedIn: true });
+        }
+        if (telegramLoginWindow && !telegramLoginWindow.isDestroyed()) {
+          telegramLoginWindow.close();
+        }
+      }
+    } catch (_) {}
+  }, 1200);
+
+  telegramLoginWindow.on('closed', () => {
+    clearInterval(authPollInterval);
+    telegramLoginWindow = null;
+    checkTelegramLoginStatus();
+  });
+}
+
 // ── Login Status Checks ────────────────────────────────────────────────────
 
 async function checkLoginStatus() {
@@ -1273,6 +1346,27 @@ async function checkRedditLoginStatus() {
   }
 }
 
+async function checkTelegramLoginStatus() {
+  try {
+    const loggedIn = Boolean(store.get('telegramLoggedIn'));
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('login-status', { platform: 'telegram', loggedIn });
+    }
+    if (!loggedIn) {
+      const feeds = store.get('feeds');
+      // Only warn if user has private Telegram channels (public channels do not require login)
+      if (feeds.some(f => f.platform === 'telegram' && (f.isPrivate || String(f.username || '').startsWith('c/') || String(f.username || '').startsWith('invite/')))) {
+        addNotification('warning', 'Telegram session required for private channels — please log in');
+      }
+    } else {
+      resolveNotificationsBySubstring('Telegram session');
+    }
+    return loggedIn;
+  } catch {
+    return false;
+  }
+}
+
 async function checkAllPlatforms() {
   return {
     instagram: await checkLoginStatus(),
@@ -1280,6 +1374,7 @@ async function checkAllPlatforms() {
     facebook: await checkFacebookLoginStatus(),
     linkedin: await checkLinkedInLoginStatus(),
     reddit: await checkRedditLoginStatus(),
+    telegram: await checkTelegramLoginStatus(),
   };
 }
 
@@ -1340,6 +1435,20 @@ ipcMain.handle('parse-reddit-url', (_e, input) => {
   return parseRedditInput(input);
 });
 
+// Telegram auth (needed only for private channels)
+ipcMain.handle('open-telegram-login', () => openTelegramLoginWindow());
+ipcMain.handle('check-telegram-login', () => checkTelegramLoginStatus());
+ipcMain.handle('logout-telegram', async () => {
+  store.set('telegramLoggedIn', false);
+  await session.defaultSession.clearStorageData({
+    origins: ['https://web.telegram.org', 'https://t.me'],
+  });
+  mainWindow.webContents.send('login-status', { platform: 'telegram', loggedIn: false });
+});
+ipcMain.handle('list-telegram-channels', async () => {
+  return await listTelegramChannels();
+});
+
 // Force reset: clear ALL cookies + storage for a platform (nuclear option)
 ipcMain.handle('force-reset-platform', async (_e, platform) => {
   const domainMap = {
@@ -1348,9 +1457,14 @@ ipcMain.handle('force-reset-platform', async (_e, platform) => {
     facebook: ['https://www.facebook.com', 'https://facebook.com'],
     linkedin: ['https://www.linkedin.com', 'https://linkedin.com'],
     reddit: ['https://www.reddit.com', 'https://reddit.com'],
+    telegram: ['https://web.telegram.org', 'https://t.me', 'https://telegram.org'],
   };
   const origins = domainMap[platform];
   if (!origins) return;
+
+  if (platform === 'telegram') {
+    store.set('telegramLoggedIn', false);
+  }
 
   // Clear all storage types for these origins
   for (const origin of origins) {
@@ -1364,6 +1478,7 @@ ipcMain.handle('force-reset-platform', async (_e, platform) => {
     facebook: ['facebook.com'],
     linkedin: ['linkedin.com'],
     reddit: ['reddit.com'],
+    telegram: ['telegram.org', 't.me'],
   };
   for (const domain of (domainParts[platform] || [])) {
     const cookies = await session.defaultSession.cookies.get({ domain });
@@ -1407,9 +1522,9 @@ async function addFeedCore(input) {
     parsed = parseProfileInput(input);
   }
 
-  if (!parsed) throw new Error('Invalid URL or username. Supported: Reddit, Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
+  if (!parsed) throw new Error('Invalid URL or username. Supported: Telegram, Reddit, Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
 
-  const { username, platform } = parsed;
+  let { username, platform } = parsed;
 
   // Custom websites get routed to the wizard flow
   if (platform === 'custom') {
@@ -1434,6 +1549,17 @@ async function addFeedCore(input) {
     profileData = await scrapeTxtFile(parsed.fullUrl);
   } else if (platform === 'reddit') {
     profileData = await scrapeReddit(parsed.fullUrl);
+  } else if (platform === 'telegram') {
+    profileData = await scrapeTelegramChannel(parsed, {
+      telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
+    });
+    // If an invite link (invite/HASH) resolved to a permanent channel username (c/12345 or public handle), adopt it
+    if (profileData && profileData.username && profileData.username !== username) {
+      username = profileData.username;
+      if (feeds.find((f) => f.username === username && f.platform === platform)) {
+        throw new Error(`Already tracking ${profileData.fullName || username} on Telegram`);
+      }
+    }
   } else {
     profileData = await scrapeInstagramProfile(username);
   }
@@ -1444,8 +1570,10 @@ async function addFeedCore(input) {
         ? `Found no entries in ${parsed.fullUrl}. Make sure the file is a valid changelog.`
         : platform === 'reddit'
           ? `Found no posts for ${parsed.alias || username} on Reddit. Make sure the subreddit exists or check your search/sort options.`
-          : `Found no posts for @${username} on ${platform}. ` +
-            'Make sure you are logged in and the profile is accessible.'
+          : platform === 'telegram'
+            ? `Found no posts for ${parsed.alias || username} on Telegram. If this is a private channel, make sure you are logged into Telegram.`
+            : `Found no posts for @${username} on ${platform}. ` +
+              'Make sure you are logged in and the profile is accessible.'
     );
   }
 
@@ -1453,6 +1581,7 @@ async function addFeedCore(input) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
 
   const isOrg = Boolean(username && typeof username === 'string' && (username.startsWith('company/') || username.startsWith('showcase/') || username.startsWith('school/')));
+  const isPrivateTg = platform === 'telegram' && Boolean(profileData.isPrivate ?? parsed.isPrivate ?? username.startsWith('c/'));
   const profileUrls = {
     twitter: `https://x.com/${username}`,
     facebook: `https://www.facebook.com/${username}`,
@@ -1460,6 +1589,9 @@ async function addFeedCore(input) {
     linkedin: isOrg ? `https://www.linkedin.com/${username}` : `https://www.linkedin.com/in/${username}`,
     txt: parsed.fullUrl || (typeof input === 'string' ? input : ''),
     reddit: parsed.fullUrl || (typeof input === 'string' ? input : ''),
+    telegram: isPrivateTg
+      ? `https://t.me/${username}`
+      : `https://t.me/s/${username}`,
   };
 
   // Clean feedKey for safe filenames and URL routes
@@ -1471,14 +1603,20 @@ async function addFeedCore(input) {
     ? new Date(Math.max(...postsWithTsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
+  const defaultAlias =
+    parsed.alias ||
+    (platform === 'telegram' && isPrivateTg && profileData.fullName ? profileData.fullName : username);
+
   const entry = {
     url: profileUrls[platform] || profileUrls.instagram,
     username,
     feedKey,
     platform,
+    isPrivate: platform === 'telegram' ? isPrivateTg : undefined,
+    chatId: platform === 'telegram' ? (profileData.chatId || parsed.chatId || null) : undefined,
     subTab: parsed.subTab || null,
-    fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' ? (typeof input === 'string' ? input : parsed.fullUrl) : null),
-    alias: parsed.alias || username,
+    fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' || platform === 'telegram' ? profileUrls[platform] : null),
+    alias: defaultAlias,
     directExternalLink: Boolean(parsed.directExternalLink),
     filterKeywords: parsed.filterKeywords || [],
     lastChecked: new Date().toISOString(),
@@ -1804,6 +1942,11 @@ async function refreshFeedCore(username, platform) {
     } else if (platform === 'reddit') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'reddit');
       profileData = await scrapeReddit(feedEntry?.fullUrl || feedEntry?.url);
+    } else if (platform === 'telegram') {
+      const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'telegram');
+      profileData = await scrapeTelegramChannel(feedEntry || username, {
+        telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
+      });
     } else if (platform === 'custom') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'custom');
       profileData = await scrapeCustomSiteHeadless(feedEntry?.fullUrl, feedEntry?.selector, feedEntry?.alias || username, feedEntry?.scrollSelector, feedEntry?.scrollCount);
@@ -1879,6 +2022,10 @@ async function refreshAllCore() {
         profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
       } else if (platform === 'reddit') {
         profileData = await scrapeReddit(feed.fullUrl || feed.url);
+      } else if (platform === 'telegram') {
+        profileData = await scrapeTelegramChannel(feed, {
+          telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
+        });
       } else if (platform === 'custom') {
         profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
       } else {
@@ -2005,12 +2152,14 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
     let fileCount = 0;
 
     for (const [category, feeds] of Object.entries(groups)) {
-      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Text': 'txt', 'Custom': 'custom' };
+      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Telegram': 'telegram', 'Reddit': 'reddit', 'Text': 'txt', 'Custom': 'custom' };
       const platformUrlBase = {
         'Instagram': 'https://www.instagram.com/',
         'Twitter': 'https://x.com/',
         'Facebook': 'https://www.facebook.com/',
         'LinkedIn': 'https://www.linkedin.com/in/',
+        'Telegram': 'https://t.me/',
+        'Reddit': 'https://www.reddit.com/',
         'Text': '',
         'Custom': '',
       };
@@ -2020,8 +2169,8 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
         const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
         const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
         const isOrg = feed.username.startsWith('company/') || feed.username.startsWith('showcase/') || feed.username.startsWith('school/');
-        const htmlUrl = (feed.platform === 'txt' || feed.platform === 'custom')
-          ? (feed.fullUrl || feed.url || '')
+        const htmlUrl = (feed.platform === 'txt' || feed.platform === 'custom' || feed.platform === 'reddit' || feed.platform === 'telegram')
+          ? (feed.fullUrl || feed.url || `${platformUrlBase[category] || ''}${feed.username}`)
           : feed.platform === 'linkedin'
             ? (isOrg ? `https://www.linkedin.com/${feed.username}/` : `https://www.linkedin.com/in/${feed.username}/`)
             : `${platformUrlBase[category] || ''}${feed.username}/`;
@@ -2318,6 +2467,10 @@ function parseProfileInput(input) {
     }
     return { username: fileName, platform: 'txt', fullUrl };
   }
+
+  // Telegram channel URL or shorthand (public t.me/..., private t.me/c/..., invite t.me/+..., web.telegram.org)
+  const telegramParsed = parseTelegramInput(input);
+  if (telegramParsed) return telegramParsed;
 
   // Reddit URL or shorthand
   const redditParsed = parseRedditInput(input);

@@ -59,6 +59,13 @@ async function generateFeed(username, profileData, store, platform) {
       favicon: 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png',
       label: 'Reddit',
     },
+    telegram: {
+      siteUrl: profileData.fullUrl || (username.startsWith('c/') ? `https://t.me/${username}` : `https://t.me/s/${username}`),
+      favicon: 'https://telegram.org/img/apple-touch-icon.png',
+      label: (username.startsWith('c/') || username.startsWith('invite/') || profileData.isPrivate)
+        ? 'Telegram Private Channel'
+        : 'Telegram',
+    },
   };
 
   const meta = platformMeta[platform] || platformMeta.instagram;
@@ -147,9 +154,15 @@ async function generateFeed(username, profileData, store, platform) {
 
     const title = post.title || truncate(displayCaption || `Post by ${username}`, 120);
     const altText = isAiGuess ? escapeHtml(rawCaption) : 'Post image';
-    let postImg = post.imageUrl || (post.media && post.media.find(m => m.type === 'image')?.url);
+    let postImg =
+      post.imageUrl ||
+      post.displayUrl ||
+      (Array.isArray(post.images) && post.images[0]) ||
+      (post.media && post.media.find(m => m.type === 'image')?.url);
     const postVid = post.videoUrl || (post.media && post.media.find(m => m.type === 'video')?.url);
+    const postAud = post.audioUrl || (post.media && post.media.find(m => m.type === 'audio')?.url);
     const isVideo = Boolean(post.isVideo || postVid);
+    const isAudio = Boolean(post.isAudio || postAud);
 
     const cleanAuthor = (post.author || '').replace(/^u\//i, '');
     const authorLine = cleanAuthor ? `Posted by u/${escapeHtml(cleanAuthor)} · ` : '';
@@ -165,14 +178,37 @@ async function generateFeed(username, profileData, store, platform) {
 
     const ytId = extractYouTubeId(post.externalUrl || post.contentHref);
 
-    let imageHtml = postImg
-      ? `<p><img src="${escapeHtml(postImg)}" alt="${altText}" style="max-width:100%;" /></p>`
-      : '';
+    let imageHtml = '';
+    if (Array.isArray(post.images) && post.images.length > 1) {
+      imageHtml = post.images
+        .map((imgUrl) => `<p><img src="${escapeHtml(imgUrl)}" alt="${altText}" style="max-width:100%;" /></p>`)
+        .join('');
+    } else if (postImg) {
+      imageHtml = `<p><img src="${escapeHtml(postImg)}" alt="${altText}" style="max-width:100%;" /></p>`;
+    }
     let videoHtml = isVideo && postVid
       ? `<p><video src="${escapeHtml(postVid)}" controls style="max-width:100%;"></video></p>`
       : '';
-    const captionHtml = displayCaption && displayCaption !== post.title && displayCaption !== `u/${post.author}` && displayCaption !== post.externalUrl
-      ? `<p>${escapeHtml(displayCaption).replace(/\n/g, '<br/>')}</p>`
+    let audioHtml = isAudio && postAud
+      ? `<p><audio src="${escapeHtml(postAud)}" controls style="width:100%;"></audio></p>`
+      : '';
+    let telegramMediaActionHtml = '';
+    if (platform === 'telegram' && post.permalink) {
+      if (isVideo) {
+        const durSuffix = post.videoDuration ? ` (${escapeHtml(post.videoDuration)})` : '';
+        telegramMediaActionHtml = `<p>🎬 <a href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener"><strong>Watch Video on Telegram${durSuffix}</strong></a></p>`;
+      } else if (isAudio) {
+        const audSuffix = post.audioTitle ? `: ${escapeHtml(post.audioTitle)}` : '';
+        telegramMediaActionHtml = `<p>🎵 <a href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener"><strong>Listen to Audio on Telegram${audSuffix}</strong></a></p>`;
+      }
+    }
+    let bodyTextForHtml = displayCaption;
+    if (telegramMediaActionHtml && bodyTextForHtml) {
+      // Remove the leading media summary line if telegramMediaActionHtml already renders the clickable media header
+      bodyTextForHtml = bodyTextForHtml.replace(/^(?:🎬|🎵|🎤)\s+[^\n]+(?:\n\n|\n|$)/, '').trim();
+    }
+    const captionHtml = bodyTextForHtml && bodyTextForHtml !== post.title && bodyTextForHtml !== `u/${post.author}` && bodyTextForHtml !== post.externalUrl
+      ? `<p>${escapeHtml(bodyTextForHtml).replace(/\n/g, '<br/>')}</p>`
       : '';
 
     let externalMediaHtml = '';
@@ -207,7 +243,7 @@ async function generateFeed(username, profileData, store, platform) {
       id: primaryId,
       link: primaryLink,
       description: truncate(displayCaption || title, 300),
-      content: `${imageHtml}${videoHtml}${externalMediaHtml}${captionHtml}${statsHtml}`,
+      content: `${imageHtml}${videoHtml}${audioHtml}${telegramMediaActionHtml}${externalMediaHtml}${captionHtml}${statsHtml}`,
       date: new Date(post.timestamp),
       image: postImg || undefined,
       author: [
@@ -221,10 +257,11 @@ async function generateFeed(username, profileData, store, platform) {
 
   // Write both RSS 2.0 and Atom
   let rssXml = feed.rss2();
-  // Fix unescaped ampersands in enclosure URLs for strict XML parsers (e.g. FreshRSS / SimplePie)
+  // Fix unescaped ampersands in enclosure URLs and invalid image MIME types for extensionless CDN URLs
   rssXml = rssXml.replace(/<enclosure\s+url="([^"]+)"/g, (match, url) => {
     return `<enclosure url="${url.replace(/&/g, "&amp;").replace(/&amp;amp;/g, "&amp;")}"`;
   });
+  rssXml = rssXml.replace(/type="image\/(?!(?:jpeg|jpg|png|gif|webp|svg\+xml|avif|bmp)"\s*\/?>)[^"]*"/g, 'type="image/jpeg"');
   const atomXml = feed.atom1();
 
   fs.writeFileSync(path.join(feedDir, `${feedKey}.rss.xml`), rssXml, 'utf-8');

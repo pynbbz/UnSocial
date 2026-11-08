@@ -8,6 +8,7 @@ const twStatusEl = $('#tw-login-status');
 const fbStatusEl = $('#fb-login-status');
 const liStatusEl = $('#li-login-status');
 const rdStatusEl = $('#rd-login-status');
+const tgStatusEl = $('#tg-login-status');
 
 const inputUrl = $('#input-url');
 const btnAdd = $('#btn-add');
@@ -72,6 +73,7 @@ let twLoggedIn = false;
 let fbLoggedIn = false;
 let liLoggedIn = false;
 let rdLoggedIn = false;
+let tgLoggedIn = false;
 let tunnelDomain = '';
 let tunnelRunning = false;
 let feedToken = '';
@@ -140,9 +142,11 @@ let activeGroup = null;
   await window.api.checkFacebookLogin();
   await window.api.checkLinkedInLogin();
   await window.api.checkRedditLogin();
+  await window.api.checkTelegramLogin();
 
-  // Setup Reddit modal
+  // Setup Reddit & Telegram modals
   setupRedditModal();
+  setupTelegramModal();
 
   // Load feeds
   await renderFeeds();
@@ -163,6 +167,10 @@ window.api.onLoginStatus(({ platform, loggedIn }) => {
   } else if (platform === 'reddit') {
     rdLoggedIn = loggedIn;
     updatePlatformLoginUI('reddit', loggedIn);
+  } else if (platform === 'telegram') {
+    tgLoggedIn = loggedIn;
+    updatePlatformLoginUI('telegram', loggedIn);
+    updateTelegramModalAuthUI();
   } else {
     igLoggedIn = loggedIn;
     updatePlatformLoginUI('instagram', loggedIn);
@@ -351,6 +359,9 @@ function updatePlatformLoginUI(platform, loggedIn) {
   } else if (platform === 'reddit') {
     badgeEl = rdStatusEl;
     reconnectEl = $('#rd-reconnect');
+  } else if (platform === 'telegram') {
+    badgeEl = tgStatusEl;
+    reconnectEl = $('#tg-reconnect');
   } else {
     badgeEl = igStatusEl;
     reconnectEl = $('#ig-reconnect');
@@ -407,6 +418,14 @@ rdStatusEl?.addEventListener('click', () => {
   }
 });
 
+tgStatusEl?.addEventListener('click', () => {
+  if (tgLoggedIn) {
+    if (confirm('Log out of Telegram?')) window.api.logoutTelegram();
+  } else {
+    window.api.openTelegramLogin();
+  }
+});
+
 // Click reconnect buttons directly: open login window without logging out
 $('#ig-reconnect')?.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -428,6 +447,10 @@ $('#rd-reconnect')?.addEventListener('click', (e) => {
   e.stopPropagation();
   window.api.openRedditLogin();
 });
+$('#tg-reconnect')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.api.openTelegramLogin();
+});
 
 // Right-click platform badge: force reset (clears all cookies & storage)
 for (const [el, platform, name] of [
@@ -436,6 +459,7 @@ for (const [el, platform, name] of [
   [fbStatusEl, 'facebook', 'Facebook'],
   [liStatusEl, 'linkedin', 'LinkedIn'],
   [rdStatusEl, 'reddit', 'Reddit'],
+  [tgStatusEl, 'telegram', 'Telegram'],
 ]) {
   if (!el) continue;
   el.addEventListener('contextmenu', async (e) => {
@@ -1096,10 +1120,11 @@ async function renderFeeds() {
 
   // Group feeds by category
   const groups = {};
-  const groupOrder = ['Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
+  const groupOrder = ['Telegram', 'Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
   for (const feed of filteredFeeds) {
     const platform = feed.platform || 'instagram';
-    const category = platform === 'reddit' ? 'Reddit' :
+    const category = platform === 'telegram' ? 'Telegram' :
+      platform === 'reddit' ? 'Reddit' :
       platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
       platform === 'linkedin' ? 'LinkedIn' :
@@ -1202,12 +1227,14 @@ function buildFeedCard(feed) {
     const staleThresholdMs = feed.boosted ? 2 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000;
     const isStale = (Date.now() - lastCheckedMs) > staleThresholdMs;
     const hasError = notifications.some(n => !n.resolved && n.type === 'error' && n.message.includes(`@${feed.username}`));
+    const isPrivateTgFeed = platform === 'telegram' && Boolean(feed.isPrivate || String(feed.username || '').startsWith('c/') || String(feed.username || '').startsWith('invite/'));
     const platformLoggedOut = (platform === 'instagram' && !igLoggedIn) ||
                               (platform === 'twitter' && !twLoggedIn) ||
                               (platform === 'facebook' && !fbLoggedIn) ||
                               (platform === 'linkedin' && !liLoggedIn) ||
-                              (platform === 'reddit' && !rdLoggedIn);
-    // txt and custom feeds never require login, so only mark stale for actual staleness/errors
+                              (platform === 'reddit' && !rdLoggedIn) ||
+                              (isPrivateTgFeed && !tgLoggedIn);
+    // txt, custom, and public telegram feeds never require login, so only mark stale for actual staleness/errors
     if (isStale || hasError || (platformLoggedOut && platform !== 'txt' && platform !== 'custom')) {
       card.classList.add('feed-stale');
     }
@@ -1215,22 +1242,25 @@ function buildFeedCard(feed) {
     const customSourceUrl = feed.fullUrl || feed.url || '';
     const customFavicon = getDomainFaviconUrl(customSourceUrl);
     const customFallbackLogo = 'https://cdn-icons-png.flaticon.com/512/1006/1006771.png';
-    const platformLogo = platform === 'reddit'
-      ? 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png'
-      : platform === 'twitter'
-        ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-        : platform === 'facebook'
-          ? 'https://www.facebook.com/images/fb_icon_325x325.png'
-          : platform === 'linkedin'
-            ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
-            : platform === 'txt'
-              ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
-              : platform === 'custom'
-                ? (customFavicon || customFallbackLogo)
-                : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
+    const platformLogo = platform === 'telegram'
+      ? 'https://telegram.org/img/apple-touch-icon.png'
+      : platform === 'reddit'
+        ? 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png'
+        : platform === 'twitter'
+          ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+          : platform === 'facebook'
+            ? 'https://www.facebook.com/images/fb_icon_325x325.png'
+            : platform === 'linkedin'
+              ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
+              : platform === 'txt'
+                ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
+                : platform === 'custom'
+                  ? (customFavicon || customFallbackLogo)
+                  : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
     const isGroup = feed.username.startsWith('groups/');
     const isEvent = feed.username.startsWith('events/') || feed.username === 'events';
-    const platformLabel = platform === 'reddit' ? 'Reddit' :
+    const platformLabel = platform === 'telegram' ? (isPrivateTgFeed ? 'Telegram Private' : 'Telegram') :
+                          platform === 'reddit' ? 'Reddit' :
                           platform === 'twitter' ? 'Twitter' :
                           platform === 'facebook' ? (isGroup ? 'FB Group' : isEvent ? 'FB Event' : 'Facebook') :
                           platform === 'linkedin' ? 'LinkedIn' :
@@ -1240,7 +1270,7 @@ function buildFeedCard(feed) {
     const tokenSuffix = tokenQueryString('?');
     const publicUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
     const timeAgo = formatTimeAgo(feed.lastChecked);
-    const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt') ? '' : '@';
+    const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt' || isPrivateTgFeed) ? '' : '@';
 
     card.innerHTML = `
       <div class="feed-card-content">
@@ -1253,6 +1283,7 @@ function buildFeedCard(feed) {
             <div class="feed-name">
               <span class="feed-alias-text" title="${escapeHtml(feed.alias || feed.username)}">${escapeHtml(feed.alias || feed.username)}</span>
               <span class="feed-badges">
+                ${isPrivateTgFeed ? '<span class="feed-tag-badge" title="Private Telegram channel (uses authenticated Telegram session)">🔒 Private</span>' : ''}
                 ${(platform === 'reddit' && feed.directExternalLink) ? '<span class="feed-tag-badge" title="Direct Media Link active (primary RSS link opens external video directly)">▶ Direct Video</span>' : ''}
                 ${(Array.isArray(feed.filterKeywords) && feed.filterKeywords.length > 0) ? `<span class="feed-tag-badge feed-filter-badge" title="Filtered titles containing: ${escapeHtml(feed.filterKeywords.join(', '))}">🚫 ${feed.filterKeywords.length} filter${feed.filterKeywords.length > 1 ? 's' : ''}</span>` : ''}
               </span>
@@ -1523,7 +1554,8 @@ async function exportOpml() {
     const groups = {};
     for (const feed of feeds) {
       const platform = feed.platform || 'instagram';
-      const category = platform === 'reddit' ? 'Reddit' :
+      const category = platform === 'telegram' ? 'Telegram' :
+        platform === 'reddit' ? 'Reddit' :
         platform === 'twitter' ? 'Twitter' :
         platform === 'facebook' ? 'Facebook' :
         platform === 'linkedin' ? 'LinkedIn' :
@@ -2196,5 +2228,222 @@ function setupRedditModal() {
   });
 
   updateRedditBuilder();
+}
+
+// ── Telegram Feed Builder & Channel Picker Modal ────────────────────────
+
+const telegramModalOverlay = $('#telegram-modal');
+const btnOpenTelegramModal = $('#btn-open-telegram-modal');
+const btnCloseTelegramModal = $('#btn-close-telegram-modal');
+const btnCancelTelegramModal = $('#btn-cancel-telegram-modal');
+const btnSubmitTelegramModal = $('#btn-submit-telegram-modal');
+const telegramModeTabs = document.querySelectorAll('#telegram-mode-tabs .reddit-mode-tab');
+const telegramViewPublic = $('#telegram-view-public');
+const telegramViewPrivate = $('#telegram-view-private');
+const telegramPublicInput = $('#telegram-public-input');
+const telegramPrivateInput = $('#telegram-private-input');
+const telegramCustomAlias = $('#telegram-custom-alias');
+const telegramModalError = $('#telegram-modal-error');
+const btnTelegramModalLogin = $('#btn-telegram-modal-login');
+const telegramAuthHint = $('#telegram-auth-hint');
+const btnLoadTelegramChannels = $('#btn-load-telegram-channels');
+const telegramChannelsPicker = $('#telegram-channels-picker');
+
+let activeTelegramTab = 'public';
+
+function updateTelegramModalAuthUI() {
+  if (btnTelegramModalLogin) {
+    btnTelegramModalLogin.textContent = tgLoggedIn ? '✓ Logged into Telegram' : 'Log into Telegram';
+    btnTelegramModalLogin.classList.toggle('btn-primary', !tgLoggedIn);
+  }
+  if (telegramAuthHint) {
+    telegramAuthHint.innerHTML = tgLoggedIn
+      ? '<span class="subtle" style="color: #52c41a;">✓ Connected to Telegram — you can paste a private channel link or load your joined channels below.</span>'
+      : '<span class="subtle">Log in once via QR code or phone number to fetch private channels you have joined.</span>';
+  }
+}
+
+function switchTelegramTab(mode) {
+  activeTelegramTab = mode;
+  telegramModeTabs.forEach((tab) => {
+    tab.classList.toggle('is-active', tab.dataset.mode === mode);
+  });
+  if (telegramViewPublic) telegramViewPublic.style.display = mode === 'public' ? 'flex' : 'none';
+  if (telegramViewPrivate) telegramViewPrivate.style.display = mode === 'private' ? 'flex' : 'none';
+  if (telegramModalError) {
+    telegramModalError.style.display = 'none';
+    telegramModalError.textContent = '';
+  }
+}
+
+function openTelegramModal() {
+  if (!telegramModalOverlay) return;
+  if (telegramModalError) {
+    telegramModalError.style.display = 'none';
+    telegramModalError.textContent = '';
+  }
+  updateTelegramModalAuthUI();
+
+  const prefill = inputUrl ? inputUrl.value.trim() : '';
+  if (prefill && (prefill.includes('t.me/') || prefill.includes('telegram.'))) {
+    if (prefill.includes('/c/') || prefill.includes('/+') || prefill.includes('joinchat/') || prefill.includes('#-')) {
+      switchTelegramTab('private');
+      if (telegramPrivateInput) telegramPrivateInput.value = prefill;
+    } else {
+      switchTelegramTab('public');
+      if (telegramPublicInput) telegramPublicInput.value = prefill;
+    }
+  } else {
+    switchTelegramTab('public');
+  }
+
+  telegramModalOverlay.style.display = 'flex';
+  setTimeout(() => {
+    if (activeTelegramTab === 'public' && telegramPublicInput) telegramPublicInput.focus();
+    else if (activeTelegramTab === 'private' && telegramPrivateInput) telegramPrivateInput.focus();
+  }, 80);
+}
+
+function closeTelegramModal() {
+  if (telegramModalOverlay) telegramModalOverlay.style.display = 'none';
+}
+
+function setupTelegramModal() {
+  if (!telegramModalOverlay) return;
+
+  btnOpenTelegramModal?.addEventListener('click', () => openTelegramModal());
+  btnCloseTelegramModal?.addEventListener('click', closeTelegramModal);
+  btnCancelTelegramModal?.addEventListener('click', closeTelegramModal);
+
+  telegramModalOverlay.addEventListener('click', (e) => {
+    if (e.target === telegramModalOverlay) closeTelegramModal();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && telegramModalOverlay.style.display !== 'none') {
+      closeTelegramModal();
+    }
+  });
+
+  telegramModeTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      switchTelegramTab(tab.dataset.mode);
+    });
+  });
+
+  btnTelegramModalLogin?.addEventListener('click', () => {
+    window.api.openTelegramLogin();
+  });
+
+  btnLoadTelegramChannels?.addEventListener('click', async () => {
+    if (!tgLoggedIn) {
+      toast('Please log into Telegram first', 'error');
+      window.api.openTelegramLogin();
+      return;
+    }
+    btnLoadTelegramChannels.disabled = true;
+    btnLoadTelegramChannels.textContent = '⏳ Loading channels…';
+    if (telegramChannelsPicker) {
+      telegramChannelsPicker.style.display = 'block';
+      telegramChannelsPicker.innerHTML = '<div class="subtle" style="padding: 8px;">Fetching your joined Telegram channels…</div>';
+    }
+
+    try {
+      const channels = await window.api.listTelegramChannels();
+      if (!channels || channels.length === 0) {
+        telegramChannelsPicker.innerHTML = '<div class="subtle" style="padding: 8px;">No channels found in your Telegram dialog list.</div>';
+      } else {
+        telegramChannelsPicker.innerHTML = '';
+        for (const ch of channels) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 6px; cursor: pointer; gap: 8px;';
+          row.onmouseenter = () => { row.style.background = 'rgba(255,255,255,0.06)'; };
+          row.onmouseleave = () => { row.style.background = 'transparent'; };
+
+          const badge = ch.isPrivate
+            ? '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(250,173,20,0.18); color: #faad14;">🔒 Private</span>'
+            : '<span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(38,165,228,0.18); color: #26A5E4;">Public</span>';
+
+          row.innerHTML = `
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(ch.title)}</div>
+              <div class="subtle" style="font-size: 11px;">${escapeHtml(ch.url)}</div>
+            </div>
+            ${badge}
+          `;
+          row.addEventListener('click', () => {
+            if (telegramPrivateInput) telegramPrivateInput.value = ch.url;
+            if (telegramCustomAlias) telegramCustomAlias.value = ch.title;
+            toast(`Selected "${ch.title}"`, 'info');
+          });
+          telegramChannelsPicker.appendChild(row);
+        }
+      }
+    } catch (err) {
+      if (telegramChannelsPicker) {
+        telegramChannelsPicker.innerHTML = `<div class="subtle" style="padding: 8px; color: #ff4d4f;">${escapeHtml(err.message || 'Failed to load channels')}</div>`;
+      }
+    } finally {
+      btnLoadTelegramChannels.disabled = false;
+      btnLoadTelegramChannels.textContent = 'Load My Channels';
+    }
+  });
+
+  btnSubmitTelegramModal?.addEventListener('click', async () => {
+    if (telegramModalError) {
+      telegramModalError.style.display = 'none';
+      telegramModalError.textContent = '';
+    }
+
+    let rawTarget = activeTelegramTab === 'public'
+      ? (telegramPublicInput ? telegramPublicInput.value.trim() : '')
+      : (telegramPrivateInput ? telegramPrivateInput.value.trim() : '');
+
+    if (!rawTarget) {
+      if (telegramModalError) {
+        telegramModalError.textContent = activeTelegramTab === 'public'
+          ? 'Please enter a public Telegram channel URL or @handle (e.g. t.me/hesam_tone).'
+          : 'Please enter a private channel link (e.g. https://t.me/c/123456789/1 or https://t.me/+InviteHash) or select one from your channels.';
+        telegramModalError.style.display = 'block';
+      }
+      return;
+    }
+
+    // If user typed a bare channel handle in the public tab (e.g. "hesam_tone" or "@hesam_tone"), normalize to t.me/<handle>
+    if (activeTelegramTab === 'public' && !rawTarget.includes('/') && !rawTarget.startsWith('tg:')) {
+      rawTarget = `https://t.me/${rawTarget.replace(/^@/, '')}`;
+    }
+
+    const alias = (telegramCustomAlias ? telegramCustomAlias.value.trim() : '') || undefined;
+
+    btnSubmitTelegramModal.disabled = true;
+    const spinner = btnSubmitTelegramModal.querySelector('.btn-spinner');
+    const textSpan = btnSubmitTelegramModal.querySelector('.btn-text');
+    if (spinner) spinner.style.display = 'inline-block';
+    if (textSpan) textSpan.textContent = 'Adding Feed…';
+
+    try {
+      await window.api.addFeed(alias ? { url: rawTarget, alias } : rawTarget);
+      closeTelegramModal();
+      if (telegramPublicInput) telegramPublicInput.value = '';
+      if (telegramPrivateInput) telegramPrivateInput.value = '';
+      if (telegramCustomAlias) telegramCustomAlias.value = '';
+      if (inputUrl && (inputUrl.value.includes('t.me') || inputUrl.value.includes('telegram'))) {
+        inputUrl.value = '';
+      }
+      await renderFeeds();
+      toast('Telegram channel feed added!', 'success');
+    } catch (err) {
+      if (telegramModalError) {
+        telegramModalError.textContent = err.message || 'Failed to add Telegram feed.';
+        telegramModalError.style.display = 'block';
+      }
+      toast(err.message || 'Failed to add Telegram feed', 'error');
+    } finally {
+      btnSubmitTelegramModal.disabled = false;
+      if (spinner) spinner.style.display = 'none';
+      if (textSpan) textSpan.textContent = 'Add Telegram Feed';
+    }
+  });
 }
 

@@ -80,6 +80,18 @@
             </svg>
           </button>
         </div>
+        <!-- Telegram -->
+        <div class="platform-login" id="tg-login-group">
+          <div id="tg-login-status" class="status-badge offline platform-clickable" title="Click to login / logout Telegram (only needed for private channels)">
+            <span class="status-dot"></span>
+            <span class="status-text">Telegram</span>
+          </div>
+          <button type="button" class="btn-reconnect" id="tg-reconnect" title="Reconnect Telegram" style="display: none;">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+        </div>
         <span class="status-badge feed-count-badge" id="feed-count">0 feeds</span>
         <!-- Public Access Button -->
         <button class="btn-public-access" id="btn-public-access" title="Public Access & Feed Authentication">
@@ -117,7 +129,7 @@
         <input
           type="text"
           id="input-url"
-          placeholder="Enter any URL — Reddit, social media, website, or .txt…"
+          placeholder="Enter any URL — Telegram (t.me/...), Reddit, social media, website, or .txt…"
           autocomplete="off"
         />
         <button id="btn-add" class="btn btn-primary btn-icon-action" title="Add feed" aria-label="Add feed">
@@ -138,6 +150,12 @@
             <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.702zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.688-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.197-2.512-.73a.326.326 0 0 0-.232-.095z"/>
           </svg>
           <span>+ Reddit</span>
+        </button>
+        <button type="button" id="btn-open-telegram-modal" class="btn btn-outline btn-telegram-trigger" title="Add public or private Telegram channel" aria-label="Add public or private Telegram channel">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="#26A5E4" aria-hidden="true">
+            <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.692-1.653-1.123-2.678-1.799-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.139-5.062 3.345-.479.329-.913.489-1.302.481-.428-.009-1.252-.242-1.865-.44-.751-.245-1.349-.374-1.297-.789.027-.216.324-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.015 3.333-1.386 4.025-1.627 4.477-1.635.099-.002.321.023.465.141.121.1.154.234.17.331.015.098.034.321.015.496z"/>
+          </svg>
+          <span>+ Telegram</span>
         </button>
         <div class="add-controls">
           <button id="btn-blur-toggle" class="btn btn-outline btn-icon-action" title="Blur URLs" aria-label="Blur URLs" data-state="off">
@@ -629,6 +647,103 @@
             <button type="button" class="btn btn-outline" id="btn-cancel-reddit-modal">Cancel</button>
             <button type="button" class="btn btn-primary btn-reddit-submit" id="btn-submit-reddit-modal">
               <span class="btn-text">Add Reddit Feed</span>
+              <span class="btn-spinner" aria-hidden="true" style="display:none;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                </svg>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telegram Feed Builder & Channel Picker Modal -->
+    <div class="public-access-overlay" id="telegram-modal" style="display: none;">
+      <div class="public-access-page reddit-modal-page">
+        <div class="public-access-page-header">
+          <div class="public-access-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="#26A5E4" aria-hidden="true">
+              <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.692-1.653-1.123-2.678-1.799-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.139-5.062 3.345-.479.329-.913.489-1.302.481-.428-.009-1.252-.242-1.865-.44-.751-.245-1.349-.374-1.297-.789.027-.216.324-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.015 3.333-1.386 4.025-1.627 4.477-1.635.099-.002.321.023.465.141.121.1.154.234.17.331.015.098.034.321.015.496z"/>
+            </svg>
+            <h2>Telegram Channel Feed</h2>
+          </div>
+          <button class="btn-close-overlay" id="btn-close-telegram-modal" title="Close">✕</button>
+        </div>
+
+        <div class="public-access-content reddit-modal-content">
+          <!-- Mode Tabs: Public Channel vs Private Channel -->
+          <div class="reddit-type-tabs" id="telegram-mode-tabs" role="tablist">
+            <button type="button" class="reddit-type-tab reddit-mode-tab is-active" data-mode="public">Public Channel (No Login)</button>
+            <button type="button" class="reddit-type-tab reddit-mode-tab" data-mode="private">Private Channel (Requires Login)</button>
+          </div>
+
+          <!-- Public Channel View -->
+          <div class="reddit-mode-view" id="telegram-view-public">
+            <div class="reddit-form-group">
+              <label for="telegram-public-input">Channel URL or Handle:</label>
+              <input
+                type="text"
+                id="telegram-public-input"
+                class="reddit-input"
+                placeholder="t.me/hesam_tone or https://t.me/s/hesam_tone"
+                autocomplete="off"
+              />
+              <div class="reddit-input-hints">
+                <span class="subtle">Public channels are fetched directly from <code>https://t.me/s/&lt;channel&gt;</code> — no Telegram login required.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Private Channel View -->
+          <div class="reddit-mode-view" id="telegram-view-private" style="display: none;">
+            <div class="reddit-form-group">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                <label style="margin: 0;">Telegram Account Status:</label>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-telegram-modal-login">Log into Telegram</button>
+              </div>
+              <div class="reddit-input-hints" id="telegram-auth-hint">
+                <span class="subtle">Log in once via QR code or phone number to fetch private channels you have joined.</span>
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <label for="telegram-private-input">Private Channel Link (Post Link, Invite Link, or Web URL):</label>
+              <input
+                type="text"
+                id="telegram-private-input"
+                class="reddit-input"
+                placeholder="https://t.me/c/1234567890/45 or https://t.me/+InviteHash"
+                autocomplete="off"
+              />
+              <div class="reddit-input-hints">
+                <span class="subtle">Right-click any post in a private channel and copy its link (<code>t.me/c/...</code>), paste an invite link (<code>t.me/+...</code>), or pick from your joined channels below.</span>
+              </div>
+            </div>
+
+            <div class="reddit-form-group">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                <label style="margin: 0;">Or Pick from Your Joined Channels:</label>
+                <button type="button" class="btn btn-outline btn-sm" id="btn-load-telegram-channels">Load My Channels</button>
+              </div>
+              <div id="telegram-channels-picker" style="max-height: 190px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 6px; display: none;"></div>
+            </div>
+          </div>
+
+          <!-- Common Options -->
+          <div class="reddit-common-section">
+            <div class="reddit-form-group">
+              <label for="telegram-custom-alias">Feed Title / Alias (optional):</label>
+              <input type="text" id="telegram-custom-alias" class="reddit-input" placeholder="Leave blank to use channel title" autocomplete="off" />
+            </div>
+
+            <div id="telegram-modal-error" class="add-error" style="color:var(--danger, #ff4d4f); font-size: 13px; display:none;"></div>
+          </div>
+
+          <div class="reddit-modal-actions">
+            <button type="button" class="btn btn-outline" id="btn-cancel-telegram-modal">Cancel</button>
+            <button type="button" class="btn btn-primary btn-reddit-submit" id="btn-submit-telegram-modal">
+              <span class="btn-text">Add Telegram Feed</span>
               <span class="btn-spinner" aria-hidden="true" style="display:none;">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                   <path d="M21 12a9 9 0 1 1-2.64-6.36"/>

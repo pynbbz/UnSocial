@@ -254,6 +254,7 @@
         instagram: 'pbadge-instagram',
         facebook: 'pbadge-facebook',
         linkedin: 'pbadge-linkedin',
+        telegram: 'pbadge-telegram',
       };
 
       for (const [platform, id] of Object.entries(map)) {
@@ -286,6 +287,7 @@
 
   function getPlatformIcon(platform) {
     switch (platform) {
+      case 'telegram': return '✈️';
       case 'reddit': return '🔥';
       case 'twitter': return '🐦';
       case 'instagram': return '📷';
@@ -300,6 +302,7 @@
   function getFeedCategory(feed) {
     const p = (feed.platform || 'instagram').toLowerCase();
     switch (p) {
+      case 'telegram': return 'Telegram';
       case 'reddit': return 'Reddit';
       case 'twitter': return 'Twitter';
       case 'facebook': return 'Facebook';
@@ -373,7 +376,7 @@
 
     // 2. Group by category
     const groups = {};
-    const groupOrder = ['Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
+    const groupOrder = ['Telegram', 'Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
     for (const feed of searchedFeeds) {
       const cat = getFeedCategory(feed);
       if (!groups[cat]) groups[cat] = [];
