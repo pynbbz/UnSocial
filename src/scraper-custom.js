@@ -539,6 +539,7 @@ async function injectSelector(win) {
       bar.innerHTML =
         '<span id="__us_instructions" style="flex:1;">🎯 <b>Step 3:</b> Hover over items and click on <b>one repeating item</b> (e.g. one post, one article, one card)</span>' +
         '<span id="__us_count" style="display:none;flex:1;color:#4ade80;font-weight:600;">✓ Found <b id="__us_num">0</b> similar items</span>' +
+        '<button id="__us_btn_expand" style="display:none;background:#6366f1;color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;" title="Select a larger parent container (e.g. whole card instead of inner text)">⬆ Expand Area</button>' +
         '<input id="__us_name_input" type="text" placeholder="Feed name (optional)" style="display:none;background:#111;color:#fff;border:1px solid #444;padding:8px 12px;border-radius:6px;font-size:13px;width:200px;" />' +
         '<button id="__us_btn_confirm" style="display:none;background:#4ade80;color:#111;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">Create Feed</button>' +
         '<button id="__us_btn_reset" style="display:none;background:#f59e0b;color:#111;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;">↺ Reset</button>' +
@@ -554,7 +555,31 @@ async function injectSelector(win) {
 
       var selectedSelector = null;
       var selectedEls = [];
+      var lastMatchedContainer = null;
       var selectorMode = true;
+
+      // Helper: check if an element is an inner split column (e.g. left image / right details)
+      // inside a single card or repeating row, rather than a standalone repeating item
+      function isSubItemSplit(el, siblings) {
+        var parent = el.parentElement;
+        if (!parent) return false;
+        // If parent is a semantic single-item card/article, its direct children are sub-parts of one item
+        if (/^(ARTICLE|A|TR)$/.test(parent.tagName)) return true;
+        // If parent itself is inside a repeating list item (LI, ARTICLE, TR) or has a sibling-repeating ancestor
+        var repeatingAncestor = parent.closest('li, article, tr, [class*="event-row" i], [class*="item" i], [class*="card" i]');
+        if (repeatingAncestor && repeatingAncestor !== document.body && repeatingAncestor.parentElement) {
+          var ancTag = repeatingAncestor.tagName;
+          var ancSibs = Array.from(repeatingAncestor.parentElement.children).filter(function(c) { return c.tagName === ancTag; });
+          if (ancSibs.length >= 2 && siblings.length <= 3) {
+            // Check if siblings have different roles (e.g. one has img/date, the other has title/details)
+            var withLinks = siblings.filter(function(s) {
+              return (s.tagName === 'A' && s.href) || !!s.querySelector('a[href]');
+            }).length;
+            if (withLinks < siblings.length) return true;
+          }
+        }
+        return false;
+      }
 
       // Compute a best-effort CSS selector for an element's "repeating container"
       function findRepeatingContainer(el) {
@@ -570,7 +595,7 @@ async function injectSelector(win) {
           var tag = current.tagName;
           var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === tag; });
 
-          if (siblings.length >= 2) {
+          if (siblings.length >= 2 && !isSubItemSplit(current, siblings)) {
             // Strategy 1: data attributes shared among siblings (React, Next.js, Angular, etc.)
             var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id', 'ng-repeat', 'data-ng-repeat'];
             for (var ai = 0; ai < dataAttrs.length; ai++) {
@@ -596,10 +621,12 @@ async function injectSelector(win) {
               }
             }
 
-            // Strategy 2: shared CSS classes — filter out Tailwind/Angular state & responsive prefixes
+            // Strategy 2: shared CSS classes — filter out Tailwind/Angular/WP state, modifier & grid utility classes
             var currentClasses = Array.from(current.classList);
             var stableClasses = currentClasses.filter(function(cls) {
-              return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-)/.test(cls);
+              return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-|post-\\d+|cat_|tribe_events_cat-|status-|has-|hentry$|type-)/.test(cls) &&
+                     !/--(featured|active|selected|current|first|last|odd|even| sticky)$/i.test(cls) &&
+                     !/^(col|row|g-col|g-row|grid-col|flex-col|tribe-common-g-col|tribe-common-g-row)$/i.test(cls);
             });
 
             if (stableClasses.length > 0) {
@@ -813,7 +840,17 @@ async function injectSelector(win) {
         // Ignore our own toolbar
         if (target.closest('#__unsocial_toolbar') || target.id === '__unsocial_hover' || target.id === '__unsocial_spacer') return;
 
-        var rect = target.getBoundingClientRect();
+        // Preview the actual repeating item container that clicking here would select
+        var previewEl = target;
+        try {
+          var rep = findRepeatingContainer(target);
+          if (rep && rep.container) previewEl = rep.container;
+        } catch (_) {}
+
+        var rect = previewEl.getBoundingClientRect();
+        if ((rect.width < 10 || rect.height < 10) && previewEl.children.length === 1) {
+          rect = previewEl.children[0].getBoundingClientRect();
+        }
         hoverOverlay.style.display = 'block';
         hoverOverlay.style.left = rect.left + 'px';
         hoverOverlay.style.top = rect.top + 'px';
@@ -823,6 +860,25 @@ async function injectSelector(win) {
 
       function onMouseLeave() {
         hoverOverlay.style.display = 'none';
+      }
+
+      function applySelectionResult(result) {
+        selectorMode = false;
+        selectedSelector = result.selector;
+        lastMatchedContainer = result.container;
+        selectedEls = Array.from(document.querySelectorAll(result.selector));
+
+        hoverOverlay.style.display = 'none';
+        result.container.scrollIntoView({ behavior: 'instant', block: 'center' });
+        highlightElements(selectedEls, '#4ade80');
+
+        document.getElementById('__us_instructions').style.display = 'none';
+        document.getElementById('__us_count').style.display = '';
+        document.getElementById('__us_num').textContent = selectedEls.length;
+        document.getElementById('__us_btn_expand').style.display = '';
+        document.getElementById('__us_btn_confirm').style.display = '';
+        document.getElementById('__us_btn_reset').style.display = '';
+        document.getElementById('__us_name_input').style.display = '';
       }
 
       function onClick(e) {
@@ -855,27 +911,7 @@ async function injectSelector(win) {
           return;
         }
 
-        // Switch to confirm mode
-        selectorMode = false;
-        selectedSelector = result.selector;
-        selectedEls = Array.from(document.querySelectorAll(result.selector));
-
-        // Hide hover overlay
-        hoverOverlay.style.display = 'none';
-
-        // Scroll the clicked item into view first so bounding rects reflect final position
-        result.container.scrollIntoView({ behavior: 'instant', block: 'center' });
-
-        // Highlight all found items
-        highlightElements(selectedEls, '#4ade80');
-
-        // Update toolbar
-        document.getElementById('__us_instructions').style.display = 'none';
-        document.getElementById('__us_count').style.display = '';
-        document.getElementById('__us_num').textContent = selectedEls.length;
-        document.getElementById('__us_btn_confirm').style.display = '';
-        document.getElementById('__us_btn_reset').style.display = '';
-        document.getElementById('__us_name_input').style.display = '';
+        applySelectionResult(result);
         } catch(err) {
           console.error('[UnSocial] Selector click error:', err);
           alert('Error detecting items: ' + err.message + '. Try clicking on a different element.');
@@ -885,6 +921,18 @@ async function injectSelector(win) {
       document.addEventListener('mousemove', onMouseMove, true);
       document.addEventListener('mouseleave', onMouseLeave, true);
       document.addEventListener('click', onClick, true);
+
+      // ── Expand Area button (walk up to next repeating ancestor) ──
+      bar.querySelector('#__us_btn_expand').onclick = function(e) {
+        e.stopPropagation();
+        if (!lastMatchedContainer || !lastMatchedContainer.parentElement) return;
+        var parentResult = findRepeatingContainer(lastMatchedContainer.parentElement);
+        if (parentResult && parentResult.selector !== selectedSelector) {
+          applySelectionResult(parentResult);
+        } else {
+          alert('Already at the outermost repeating container for this item.');
+        }
+      };
 
       // ── Confirm button ──
       bar.querySelector('#__us_btn_confirm').onclick = function(e) {
@@ -918,10 +966,12 @@ async function injectSelector(win) {
         selectorMode = true;
         selectedSelector = null;
         selectedEls = [];
+        lastMatchedContainer = null;
         clearHighlights();
 
         document.getElementById('__us_instructions').style.display = '';
         document.getElementById('__us_count').style.display = 'none';
+        document.getElementById('__us_btn_expand').style.display = 'none';
         document.getElementById('__us_btn_confirm').style.display = 'none';
         document.getElementById('__us_btn_reset').style.display = 'none';
         document.getElementById('__us_name_input').style.display = 'none';

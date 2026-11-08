@@ -125,6 +125,24 @@ const REMOTE_INJECT_JS = `
     return null;
   };
 
+  window.__unsocial.isSubItemSplit = function(el, siblings) {
+    var parent = el.parentElement;
+    if (!parent) return false;
+    if (/^(ARTICLE|A|TR)$/.test(parent.tagName)) return true;
+    var repeatingAncestor = parent.closest('li, article, tr, [class*="event-row" i], [class*="item" i], [class*="card" i]');
+    if (repeatingAncestor && repeatingAncestor !== document.body && repeatingAncestor.parentElement) {
+      var ancTag = repeatingAncestor.tagName;
+      var ancSibs = Array.from(repeatingAncestor.parentElement.children).filter(function(c) { return c.tagName === ancTag; });
+      if (ancSibs.length >= 2 && siblings.length <= 3) {
+        var withLinks = siblings.filter(function(s) {
+          return (s.tagName === 'A' && s.href) || !!s.querySelector('a[href]');
+        }).length;
+        if (withLinks < siblings.length) return true;
+      }
+    }
+    return false;
+  };
+
   window.__unsocial.findRepeatingContainer = function(el) {
     var current = el;
     var maxDepth = 15;
@@ -138,7 +156,7 @@ const REMOTE_INJECT_JS = `
       var tag = current.tagName;
       var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === tag; });
 
-      if (siblings.length >= 2) {
+      if (siblings.length >= 2 && !window.__unsocial.isSubItemSplit(current, siblings)) {
         // Strategy 1: data attributes
         var dataAttrs = ['data-testid', 'data-element-name', 'data-type', 'role', 'data-qa', 'data-id', 'ng-repeat', 'data-ng-repeat'];
         for (var ai = 0; ai < dataAttrs.length; ai++) {
@@ -166,7 +184,9 @@ const REMOTE_INJECT_JS = `
         // Strategy 2: stable classes
         var currentClasses = Array.from(current.classList);
         var stableClasses = currentClasses.filter(function(cls) {
-          return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-)/.test(cls);
+          return !/^(hover:|active:|focus:|focus-within:|group-hover:|group-focus:|disabled:|visited:|checked:|open:|sm:|md:|lg:|xl:|2xl:|xs:|dark:|motion-|aria-|data-\\[|ng-|post-\\d+|cat_|tribe_events_cat-|status-|has-|hentry$|type-)/.test(cls) &&
+                 !/--(featured|active|selected|current|first|last|odd|even|sticky)$/i.test(cls) &&
+                 !/^(col|row|g-col|g-row|grid-col|flex-col|tribe-common-g-col|tribe-common-g-row)$/i.test(cls);
         });
 
         if (stableClasses.length > 0) {
