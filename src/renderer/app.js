@@ -1228,14 +1228,17 @@ function buildFeedCard(feed) {
     const isStale = (Date.now() - lastCheckedMs) > staleThresholdMs;
     const hasError = notifications.some(n => !n.resolved && n.type === 'error' && n.message.includes(`@${feed.username}`));
     const isPrivateTgFeed = platform === 'telegram' && Boolean(feed.isPrivate || String(feed.username || '').startsWith('c/') || String(feed.username || '').startsWith('invite/'));
+    const customNeedsRelogin = platform === 'custom' && Boolean(feed.loginError || feed.loginPaused || (feed.usesLogin && feed.loggedIn === false));
+    const customHasError = platform === 'custom' && Boolean(feed.lastError);
     const platformLoggedOut = (platform === 'instagram' && !igLoggedIn) ||
                               (platform === 'twitter' && !twLoggedIn) ||
                               (platform === 'facebook' && !fbLoggedIn) ||
                               (platform === 'linkedin' && !liLoggedIn) ||
                               (platform === 'reddit' && !rdLoggedIn) ||
-                              (isPrivateTgFeed && !tgLoggedIn);
-    // txt, custom, and public telegram feeds never require login, so only mark stale for actual staleness/errors
-    if (isStale || hasError || (platformLoggedOut && platform !== 'txt' && platform !== 'custom')) {
+                              (isPrivateTgFeed && !tgLoggedIn) ||
+                              customNeedsRelogin;
+    // txt and public telegram/custom feeds don't require login, so only mark stale for actual staleness, errors, or expired custom login
+    if (isStale || hasError || customHasError || (platformLoggedOut && platform !== 'txt')) {
       card.classList.add('feed-stale');
     }
 
@@ -1272,6 +1275,26 @@ function buildFeedCard(feed) {
     const timeAgo = formatTimeAgo(feed.lastChecked);
     const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt' || isPrivateTgFeed) ? '' : '@';
 
+    const customLoginBadgeHtml = platform === 'custom'
+      ? customNeedsRelogin
+        ? `<span class="feed-tag-badge feed-custom-login-badge is-error" title="${escapeHtml(feed.lastError ? `${feed.lastError} — Click to re-login & refresh (Right-click for options)` : 'Login session expired or failed — Click to re-login & refresh (Right-click for options)')}">⚠️ Re-login Needed</span>`
+        : feed.usesLogin
+          ? feed.loggedIn === true
+            ? `<span class="feed-tag-badge feed-custom-login-badge is-logged-in" title="Using verified login credentials${Array.isArray(feed.authCookieNames) && feed.authCookieNames.length ? ` (${feed.authCookieNames.length} cookie${feed.authCookieNames.length === 1 ? '' : 's'})` : ''}. Click to re-login, right-click to clear cookies or toggle.">🔐 Logged In</span>`
+            : `<span class="feed-tag-badge feed-custom-login-badge is-unverified" title="Uses login credentials (session unverified). Click to sign in or verify.">🔐 Login Active</span>`
+          : `<span class="feed-tag-badge feed-custom-login-badge is-public" title="No login credentials tracked. Click to log in to this website, or right-click to mark as using login.">🔓 No Login</span>`
+      : '';
+    const reloginBtnClass = customNeedsRelogin
+      ? ' needs-relogin'
+      : (platform === 'custom' && feed.usesLogin && feed.loggedIn === true ? ' is-logged-in' : '');
+    const reloginBtnTitle = customNeedsRelogin
+      ? 'Session expired or scrape failed — Click to Re-login & Refresh (Right-click to clear cookies)'
+      : (feed.usesLogin
+          ? (feed.loggedIn === true
+              ? 'Logged in to custom website — Click to Re-login / Manage Session (Right-click to clear cookies)'
+              : 'Uses login credentials — Click to sign in or verify session (Right-click to clear cookies)')
+          : 'Log in to Custom Website (if this site requires an account)');
+
     card.innerHTML = `
       <div class="feed-card-content">
         <div class="feed-card-header">
@@ -1284,6 +1307,7 @@ function buildFeedCard(feed) {
               <span class="feed-alias-text" title="${escapeHtml(feed.alias || feed.username)}">${escapeHtml(feed.alias || feed.username)}</span>
               <span class="feed-badges">
                 ${isPrivateTgFeed ? '<span class="feed-tag-badge" title="Private Telegram channel (uses authenticated Telegram session)">🔒 Private</span>' : ''}
+                ${customLoginBadgeHtml}
                 ${(platform === 'reddit' && feed.directExternalLink) ? '<span class="feed-tag-badge" title="Direct Media Link active (primary RSS link opens external video directly)">▶ Direct Video</span>' : ''}
                 ${(Array.isArray(feed.filterKeywords) && feed.filterKeywords.length > 0) ? `<span class="feed-tag-badge feed-filter-badge" title="Filtered titles containing: ${escapeHtml(feed.filterKeywords.join(', '))}">🚫 ${feed.filterKeywords.length} filter${feed.filterKeywords.length > 1 ? 's' : ''}</span>` : ''}
               </span>
@@ -1301,6 +1325,14 @@ function buildFeedCard(feed) {
           <div class="feed-meta">
             <span style="font-weight:bold">Latest post ${formatTimeAgo(feed.latestPostDate)}</span>
           </div>
+          ${(platform === 'custom' && (customNeedsRelogin || customHasError)) ? `
+          <div class="feed-custom-error-banner">
+            <span class="feed-custom-error-text" title="${escapeHtml(feed.lastError || 'Login session expired or selector matched 0 items')}">
+              ${escapeHtml(feed.lastError || 'Session expired — re-login needed to refresh feed')}
+            </span>
+            <button type="button" class="btn-inline-relogin">🔑 Re-login & Refresh</button>
+          </div>
+          ` : ''}
           <div class="feed-urls">
             <a class="feed-url feed-url-public" title="Click to copy public URL">${publicUrl}</a>
           </div>
@@ -1341,12 +1373,17 @@ function buildFeedCard(feed) {
           </span>
         </button>
         ${showLoginBtn ? `
-        <button class="btn btn-outline btn-icon-action feed-action-btn btn-relogin" title="Log in to Website" aria-label="Log in to Website">
+        <button class="btn btn-outline btn-icon-action feed-action-btn btn-relogin${reloginBtnClass}" title="${reloginBtnTitle}" aria-label="${reloginBtnTitle}">
           <span class="btn-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
               <polyline points="10 17 15 12 10 7"/>
               <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+          </span>
+          <span class="btn-spinner" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
             </svg>
           </span>
         </button>
@@ -1399,6 +1436,18 @@ function buildFeedCard(feed) {
             <input type="text" id="filter-input-${feedKey}" class="feed-filter-input" value="${escapeHtml(currentKeywords)}" placeholder="e.g. sponsor, giveaway, breaking news (comma-separated)" />
             <span class="feed-edit-hint">Articles with titles containing these words or whole phrases will be excluded from the generated RSS.</span>
           </div>
+          ${platform === 'custom' ? `
+          <div class="feed-edit-row feed-custom-auth-row">
+            <label class="feed-custom-auth-checkbox-label">
+              <input type="checkbox" class="feed-custom-uses-login-checkbox" ${feed.usesLogin ? 'checked' : ''} />
+              <span>🔐 Uses login credentials (track login session & alert if re-login is needed)</span>
+            </label>
+            <div class="feed-custom-auth-actions">
+              <button type="button" class="btn btn-outline btn-sm btn-edit-open-login">🔑 Re-login Now</button>
+              <button type="button" class="btn btn-outline btn-sm btn-edit-clear-cookies">🧹 Clear Site Cookies</button>
+            </div>
+          </div>
+          ` : ''}
           <div class="feed-edit-actions">
             <button type="button" class="btn btn-primary btn-sm btn-save-edit">Save</button>
             <button type="button" class="btn btn-outline btn-sm btn-cancel-edit">Cancel</button>
@@ -1408,8 +1457,44 @@ function buildFeedCard(feed) {
 
       const renameInput = feedInfo.querySelector('.rename-input');
       const filterInput = feedInfo.querySelector('.feed-filter-input');
+      const usesLoginCheckbox = feedInfo.querySelector('.feed-custom-uses-login-checkbox');
+      const openLoginEditBtn = feedInfo.querySelector('.btn-edit-open-login');
+      const clearCookiesEditBtn = feedInfo.querySelector('.btn-edit-clear-cookies');
       const saveBtn = feedInfo.querySelector('.btn-save-edit');
       const cancelBtn = feedInfo.querySelector('.btn-cancel-edit');
+
+      if (openLoginEditBtn) {
+        openLoginEditBtn.addEventListener('click', async () => {
+          const url = feed.fullUrl || feed.url;
+          openLoginEditBtn.disabled = true;
+          openLoginEditBtn.textContent = 'Logging in…';
+          try {
+            const res = await window.api.openCustomLogin(url, feed.username);
+            if (res?.refreshError) {
+              toast(`Login saved, but refresh failed: ${res.refreshError}`, 'error');
+            } else {
+              toast(`Re-logged in & refreshed @${feed.username}!`, 'success');
+            }
+          } catch (err) {
+            toast('Login failed: ' + (err.message || err), 'error');
+          } finally {
+            await renderFeeds();
+          }
+        });
+      }
+
+      if (clearCookiesEditBtn) {
+        clearCookiesEditBtn.addEventListener('click', async () => {
+          if (!confirm(`Clear all login cookies and storage for "${feed.alias || feed.username}"? You will need to log in again if this site requires authentication.`)) return;
+          try {
+            await window.api.logoutCustomFeed(feed.username);
+            toast(`Cleared site cookies for @${feed.username}`, 'info');
+            await renderFeeds();
+          } catch (err) {
+            toast('Failed to clear cookies: ' + (err.message || err), 'error');
+          }
+        });
+      }
 
       renameInput.focus();
       renameInput.select();
@@ -1420,11 +1505,12 @@ function buildFeedCard(feed) {
         const filterKeywords = filterVal
           ? filterVal.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)
           : [];
+        const usesLoginVal = usesLoginCheckbox ? usesLoginCheckbox.checked : undefined;
 
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';
         try {
-          await window.api.renameFeed(feed.username, platform, newAlias, filterKeywords);
+          await window.api.renameFeed(feed.username, platform, newAlias, filterKeywords, usesLoginVal);
           toast('Feed updated!', 'success');
         } catch (err) {
           toast('Failed to update feed: ' + (err.message || err), 'error');
@@ -1486,13 +1572,75 @@ function buildFeedCard(feed) {
     });
 
     if (platform === 'custom') {
-      card.querySelector('.btn-relogin').addEventListener('click', async () => {
+      const reloginBtn = card.querySelector('.btn-relogin');
+      const loginBadge = card.querySelector('.feed-custom-login-badge');
+      const inlineReloginBtn = card.querySelector('.btn-inline-relogin');
+
+      const handleCustomRelogin = async () => {
         const url = feed.fullUrl || feed.url;
-        toast('Opening login window…', 'info');
-        await window.api.openCustomLogin(url);
-        toast('Login window closed', 'info');
-        await renderFeeds();
-      });
+        if (reloginBtn) setBtnLoading(reloginBtn, true);
+        if (inlineReloginBtn) {
+          inlineReloginBtn.disabled = true;
+          inlineReloginBtn.textContent = 'Logging in & refreshing…';
+        }
+        toast('Opening custom site login window…', 'info');
+        try {
+          const result = await window.api.openCustomLogin(url, feed.username);
+          if (result?.refreshError) {
+            toast(`Login saved, but refresh failed: ${result.refreshError}`, 'error');
+          } else if (result?.refreshed) {
+            toast(`Re-logged in & refreshed @${feed.username}!`, 'success');
+          } else if (result?.loggedIn) {
+            toast(`Login session verified for @${feed.username}`, 'success');
+          } else {
+            toast('Login window closed (session remained logged out)', 'info');
+          }
+        } catch (err) {
+          toast(`Failed to re-login @${feed.username}: ${err.message || err}`, 'error');
+        } finally {
+          if (reloginBtn) setBtnLoading(reloginBtn, false);
+          await renderFeeds();
+          window.focus();
+        }
+      };
+
+      const handleCustomLoginContextMenu = async (e) => {
+        e.preventDefault();
+        if (feed.usesLogin) {
+          const action = confirm(
+            `Custom Login Options for "${feed.alias || feed.username}":\n\n` +
+            `• Click OK to clear site cookies & log out of this website.\n` +
+            `• Click Cancel to toggle whether this feed requires login credentials.`
+          );
+          if (action) {
+            await window.api.logoutCustomFeed(feed.username);
+            toast(`Cleared site cookies for @${feed.username}`, 'info');
+            await renderFeeds();
+          } else if (confirm(`Mark "${feed.alias || feed.username}" as a public feed (🔓 No Login)?`)) {
+            await window.api.toggleCustomLogin(feed.username, false);
+            toast(`Marked @${feed.username} as public (no login)`, 'info');
+            await renderFeeds();
+          }
+        } else {
+          if (confirm(`Mark "${feed.alias || feed.username}" as using login credentials (🔐 Uses Login)?`)) {
+            await window.api.toggleCustomLogin(feed.username, true);
+            toast(`Marked @${feed.username} as using login credentials`, 'success');
+            await renderFeeds();
+          }
+        }
+      };
+
+      if (reloginBtn) {
+        reloginBtn.addEventListener('click', handleCustomRelogin);
+        reloginBtn.addEventListener('contextmenu', handleCustomLoginContextMenu);
+      }
+      if (loginBadge) {
+        loginBadge.addEventListener('click', handleCustomRelogin);
+        loginBadge.addEventListener('contextmenu', handleCustomLoginContextMenu);
+      }
+      if (inlineReloginBtn) {
+        inlineReloginBtn.addEventListener('click', handleCustomRelogin);
+      }
     }
 
     return card;

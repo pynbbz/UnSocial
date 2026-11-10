@@ -48,17 +48,26 @@ if (portableDir) {
 
   app.setPath('userData', newUserData);
 } else if (process.platform === 'darwin') {
-  // macOS portable mode: when the .app bundle lives outside /Applications,
-  // store userData next to the .app — same as the Windows portable behaviour.
-  // This lets users share the same UnSocial-userdata folder across platforms.
+  // macOS portable mode: share the same UnSocial-userdata folder across platforms.
+  // Note: Keeping UnSocial.app itself inside OneDrive causes OneDrive FileProvider on macOS
+  // to strip symlinks inside Electron Framework.framework, breaking child renderer processes.
+  // Supporting /Applications/UnSocial.app while pointing userData at the shared OneDrive folder
+  // keeps the .app bundle safe from OneDrive symlink eviction.
+  const os = require('os');
+  const sharedOneDriveUserData = path.join(
+    os.homedir(),
+    'Library/CloudStorage/OneDrive-Personal/Documents/!Desktop/NoSocial/UnSocial-userdata'
+  );
   const appBundlePath = app.getAppPath().replace(/\/Contents\/Resources\/app(\.asar)?$/, '');
   const appDir = path.dirname(appBundlePath);
-  if (!appDir.startsWith('/Applications')) {
+  if (!appDir.startsWith('/Applications') && !appDir.endsWith('/Development/UnSocial')) {
     const newUserData = path.join(appDir, 'UnSocial-userdata');
     if (!fs.existsSync(newUserData)) {
       fs.mkdirSync(newUserData, { recursive: true });
     }
     app.setPath('userData', newUserData);
+  } else if (fs.existsSync(sharedOneDriveUserData)) {
+    app.setPath('userData', sharedOneDriveUserData);
   }
 }
 
@@ -88,7 +97,7 @@ const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { scrapeTelegramChannel, parseTelegramInput, listTelegramChannels } = require('./scraper-telegram');
-const { startCustomWizard, scrapeCustomSiteHeadless } = require('./scraper-custom');
+const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
 const { getRealisticUserAgent } = require('./user-agent');
@@ -277,6 +286,7 @@ function checkStaleFeedsNotifications() {
     const feeds = store.get('feeds');
     const now = Date.now();
     for (const feed of feeds) {
+      if (isCustomFeedPaused(feed)) continue; // paused feeds already show a login warning
       const lastChecked = feed.lastChecked ? new Date(feed.lastChecked).getTime() : 0;
       const age = now - lastChecked;
       if (age > getMaxStaleMs(feed)) {
@@ -307,6 +317,7 @@ function startStaleFeedMonitor() {
 
 let refreshTimeout = null;
 let isRefreshing = false;
+let isCustomLoginWindowOpen = false;
 
 const SCRAPE_TIMEOUT_MS = 180_000; // 3-minute hard cap per scrape
 
@@ -383,21 +394,24 @@ function scheduleNextRefresh() {
 }
 
 async function refreshOldestFeed() {
-  if (isRefreshing) {
+  if (isRefreshing || isCustomLoginWindowOpen) {
     scheduleNextRefresh();
     return;
   }
   isRefreshing = true;
+  let feed = null;
 
   try {
-    const feeds = store.get('feeds');
+    // Feeds paused because of a login problem are skipped until the user re-logs in,
+    // so we don't keep hitting the site (and trigger "too many attempts" lockouts).
+    const feeds = store.get('feeds').filter(f => !isCustomFeedPaused(f));
     if (feeds.length === 0) {
       scheduleNextRefresh();
       isRefreshing = false;
       return;
     }
 
-    const feed = sortFeedsByRefreshPriority(feeds)[0];
+    feed = sortFeedsByRefreshPriority(feeds)[0];
     const platform = feed.platform || 'instagram';
     console.log(`[Smart-refresh] Refreshing @${feed.username} (${platform}), last checked: ${feed.lastChecked || 'never'}`);
 
@@ -409,7 +423,7 @@ async function refreshOldestFeed() {
     else if (platform === 'txt') profileData = await withTimeout(scrapeTxtFile(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'reddit') profileData = await withTimeout(scrapeReddit(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'telegram') profileData = await withTimeout(scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) }), SCRAPE_TIMEOUT_MS, scrapeLabel);
-    else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount, { usesLogin: Boolean(feed.usesLogin) }), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
     const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
@@ -433,6 +447,7 @@ async function refreshOldestFeed() {
         : currentFeeds[idx].latestPostDate || null;
       store.set('feeds', currentFeeds);
     }
+    if (platform === 'custom') recordCustomFeedSuccess(feed.username, profileData.loginState);
 
     // Resolve any previous error for this feed
     resolveNotificationsBySubstring(`@${feed.username}`);
@@ -443,7 +458,6 @@ async function refreshOldestFeed() {
     }
     console.log(`[Smart-refresh] @${feed.username} done (${profileData.posts.length} posts)`);
   } catch (err) {
-    const feed = sortFeedsByRefreshPriority(store.get('feeds'))[0];
     const msg = `Failed to refresh @${feed?.username || 'unknown'}: ${err.message}`;
     console.error('[Smart-refresh]', msg);
     addNotification('error', msg);
@@ -460,6 +474,7 @@ async function refreshOldestFeed() {
           store.set('feeds', currentFeeds);
           console.log(`[Smart-refresh] Moved @${feed.username} to back of queue after failure`);
         }
+        if ((feed.platform || 'instagram') === 'custom') recordCustomFeedFailure(feed.username, err);
       } catch (e) {
         console.error('[Smart-refresh] Failed to bump lastChecked:', e.message);
       }
@@ -499,7 +514,7 @@ app.whenReady().then(async () => {
     refreshFeed: (username, platform) => refreshFeedCore(username, platform),
     refreshAll: () => refreshAllCore(),
     checkPlatforms: () => checkAllPlatforms(),
-    renameFeed: (username, platform, newAlias, filterKeywords) => renameFeedCore(username, platform, newAlias, filterKeywords),
+    renameFeed: (username, platform, newAlias, filterKeywords, usesLogin) => renameFeedCore(username, platform, newAlias, filterKeywords, usesLogin),
     listTelegramChannels: () => listTelegramChannels(),
   });
   startInternetMonitor();
@@ -614,6 +629,9 @@ app.whenReady().then(async () => {
           console.log('[Tunnel] Connected — refreshing all feeds');
           const feedsSnapshot = store.get('feeds');
           for (const feed of feedsSnapshot) {
+            // Re-check the live store: a login failure on one feed pauses every feed on that domain.
+            const liveFeed = store.get('feeds').find(f => f.username === feed.username && (f.platform || 'instagram') === (feed.platform || 'instagram'));
+            if (!liveFeed || isCustomFeedPaused(liveFeed)) continue;
             try {
               const plat = feed.platform || 'instagram';
               let profileData;
@@ -623,7 +641,7 @@ app.whenReady().then(async () => {
               else if (plat === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
               else if (plat === 'reddit') profileData = await scrapeReddit(feed.fullUrl || feed.url);
               else if (plat === 'telegram') profileData = await scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) });
-              else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
+              else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount, { usesLogin: Boolean(feed.usesLogin) });
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
               profileData.feedKey = fk;
@@ -646,10 +664,12 @@ app.whenReady().then(async () => {
                   : currentFeeds[idx].latestPostDate || null;
                 store.set('feeds', currentFeeds);
               }
+              if (plat === 'custom') recordCustomFeedSuccess(feed.username, profileData.loginState);
 
             } catch (err) {
               console.error('[Post-tunnel refresh] Failed @' + feed.username + ':', err.message);
               addNotification('error', 'Post-tunnel refresh failed @' + feed.username + ': ' + err.message);
+              if ((feed.platform || 'instagram') === 'custom') recordCustomFeedFailure(feed.username, err);
             }
           }
           if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1367,7 +1387,219 @@ async function checkTelegramLoginStatus() {
   }
 }
 
+// ── Custom Website Login State ─────────────────────────────────────────────
+//
+// loggedIn semantics for custom feeds with usesLogin:
+//   true  → the page itself showed a logged-in session (e.g. a "Log out" link)
+//   false → the page showed a login form / login link / "must be logged in"
+//   null  → not yet verified (site gives no clear signal either way)
+// Cookies are NOT trusted to mean "logged in": many sites (phpBB forums such as
+// Mobilism) set "session" cookies for guests too.
+
+function getFeedBaseDomain(f) {
+  return getDomainPartsFromUrl(f.fullUrl || f.url || '').baseDomain || '';
+}
+
+function isCustomFeedPaused(f) {
+  return (f.platform || 'instagram') === 'custom' && Boolean(f.loginPaused);
+}
+
+function notifyFeedsUpdated() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+}
+
+/**
+ * Record a failed custom-feed scrape. Login failures pause auto-refresh for the
+ * feed AND every other login-based feed on the same domain, so we stop hitting
+ * the site until the user re-logs in.
+ */
+function recordCustomFeedFailure(username, err) {
+  const feeds = store.get('feeds');
+  const target = feeds.find(f => f.username === username && (f.platform || 'instagram') === 'custom');
+  if (!target) return;
+
+  target.lastError = err.message;
+
+  if (err.isLoginError) {
+    const domain = getFeedBaseDomain(target);
+    const nowIso = new Date().toISOString();
+    const pausedNames = [];
+    for (const f of feeds) {
+      if ((f.platform || 'instagram') !== 'custom') continue;
+      const sameGroup = f === target || (domain && f.usesLogin && getFeedBaseDomain(f) === domain);
+      if (!sameGroup) continue;
+      f.loginError = true;
+      f.loggedIn = false;
+      if (!f.loginPaused) f.loginPausedAt = nowIso;
+      f.loginPaused = true;
+      if (err.lockedOut) f.loginLockedOut = true;
+      if (f !== target) {
+        f.lastError = `Paused — login problem detected on ${domain} (via "${target.alias || target.username}"). Re-login to resume.`;
+      }
+      pausedNames.push(f.alias || f.username);
+    }
+    addNotification(
+      'warning',
+      `${domain || 'Custom site'} login ${err.lockedOut ? 'locked (too many attempts)' : 'expired'} — auto-refresh paused for ${pausedNames.length} feed${pausedNames.length === 1 ? '' : 's'} until you re-login (@${username})`
+    );
+  }
+
+  store.set('feeds', feeds);
+  notifyFeedsUpdated();
+}
+
+/** Record a successful custom-feed scrape and its page-detected login state. */
+function recordCustomFeedSuccess(username, loginState) {
+  const feeds = store.get('feeds').map((f) => {
+    if (!(f.username === username && (f.platform || 'instagram') === 'custom')) return f;
+    const next = {
+      ...f,
+      loginError: false,
+      lastError: null,
+      loginPaused: false,
+      loginPausedAt: null,
+      loginLockedOut: false,
+    };
+    if (f.usesLogin) {
+      if (loginState === 'logged-in') {
+        next.loggedIn = true;
+        next.loginVerifiedAt = new Date().toISOString();
+      } else if (loginState === 'logged-out') {
+        next.loggedIn = false;
+        next.loginError = true;
+        next.loginPaused = true;
+      }
+    }
+    return next;
+  });
+  store.set('feeds', feeds);
+  notifyFeedsUpdated();
+}
+
+/** Clear pause / error state for all login feeds on a domain after a verified re-login. */
+function markCustomDomainLoggedIn(domain, username, authCookieNames) {
+  const nowIso = new Date().toISOString();
+  const feeds = store.get('feeds').map((f) => {
+    if ((f.platform || 'instagram') !== 'custom') return f;
+    const isTarget = username && f.username === username;
+    const sameDomain = domain && getFeedBaseDomain(f) === domain && (f.usesLogin || f.loginError || f.loginPaused);
+    if (!isTarget && !sameDomain) return f;
+    return {
+      ...f,
+      usesLogin: true,
+      loggedIn: true,
+      loginVerifiedAt: nowIso,
+      loginError: false,
+      loginPaused: false,
+      loginPausedAt: null,
+      loginLockedOut: false,
+      lastError: null,
+      authCookieNames: authCookieNames && authCookieNames.length ? authCookieNames : (f.authCookieNames || []),
+    };
+  });
+  store.set('feeds', feeds);
+  for (const f of feeds) {
+    if ((f.platform || 'instagram') === 'custom' && domain && getFeedBaseDomain(f) === domain) {
+      resolveNotificationsBySubstring(`@${f.username}`);
+    }
+  }
+  notifyFeedsUpdated();
+}
+
+/**
+ * Lightweight, request-free status check (runs on get-feeds / platform checks).
+ * Groups feeds by domain so all feeds from the same website stay in sync.
+ */
+async function checkCustomFeedsLoginStatus() {
+  try {
+    const feeds = store.get('feeds');
+    let changed = false;
+
+    // Cache cookies and login state per baseDomain so multiple feeds from the same website stay consistent
+    const domainStatusCache = new Map();
+
+    for (const f of feeds) {
+      if ((f.platform || 'instagram') !== 'custom') continue;
+
+      if (f.usesLogin === undefined) {
+        f.usesLogin = false;
+        f.loggedIn = false;
+        changed = true;
+        continue;
+      }
+
+      if (!f.usesLogin) {
+        if (f.loggedIn !== false) {
+          f.loggedIn = false;
+          changed = true;
+        }
+        continue;
+      }
+
+      const domain = getFeedBaseDomain(f);
+      if (!domain) continue;
+
+      let status = domainStatusCache.get(domain);
+      if (!status) {
+        status = await getSiteCookies(f.fullUrl || f.url);
+        domainStatusCache.set(domain, status);
+      }
+
+      // If site is a forum like phpBB (such as Mobilism), verify registered user ID
+      const isPhpBBSite = domain.includes('mobilism.org') || status.all.some(c => /(^|_)u$/i.test(c.name) || /(^|_)sid$/i.test(c.name));
+      if (isPhpBBSite) {
+        if (status.isPhpBBLoggedIn && !f.loginLockedOut) {
+          if (f.loggedIn !== true || f.loginError) {
+            f.loggedIn = true;
+            f.loginError = false;
+            f.loginPaused = false;
+            f.lastError = null;
+            changed = true;
+          }
+          continue;
+        } else {
+          // phpBB guest session or missing authenticated user cookie
+          if (f.loggedIn !== false || !f.loginError || !f.loginPaused) {
+            f.loggedIn = false;
+            f.loginError = true;
+            f.loginPaused = true;
+            if (!f.lastError || f.lastError.includes('guest session')) {
+              f.lastError = 'Session expired — not logged in. Re-login needed.';
+            }
+            changed = true;
+          }
+          continue;
+        }
+      }
+
+      // If saved session cookies disappeared entirely → definitely logged out.
+      const names = Array.isArray(f.authCookieNames) ? f.authCookieNames : [];
+      if (names.length > 0 && f.loggedIn !== false) {
+        const present = new Set(status.all.map((c) => c.name));
+        if (!names.some((n) => present.has(n))) {
+          f.loggedIn = false;
+          f.loginError = true;
+          f.loginPaused = true;
+          f.lastError = 'Session expired — login cookies missing. Re-login needed.';
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      store.set('feeds', feeds);
+    }
+    return feeds;
+  } catch (err) {
+    console.error('[Custom Login Check] Error:', err.message);
+    return store.get('feeds');
+  }
+}
+
 async function checkAllPlatforms() {
+  await checkCustomFeedsLoginStatus();
   return {
     instagram: await checkLoginStatus(),
     twitter: await checkTwitterLoginStatus(),
@@ -1492,8 +1724,8 @@ ipcMain.handle('force-reset-platform', async (_e, platform) => {
   return true;
 });
 
-ipcMain.handle('get-feeds', () => {
-  return store.get('feeds');
+ipcMain.handle('get-feeds', async () => {
+  return await checkCustomFeedsLoginStatus();
 });
 
 async function addFeedCore(input) {
@@ -1651,7 +1883,7 @@ ipcMain.handle('add-feed', async (_e, input) => {
 
 // ── Custom Website Feed (wizard-based) ─────────────────────────────────────
 
-async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector, scrollCount, profileData }) {
+async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector, scrollCount, usesLogin, authCookieNames, loginState, profileData }) {
   if (!profileData || profileData.posts.length < 1) {
     throw new Error('No items were found. Try clicking on a different element.');
   }
@@ -1682,6 +1914,9 @@ async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector,
     ? new Date(Math.max(...postsWithTsAdd.map(p => new Date(p.timestamp).getTime()))).toISOString()
     : null;
 
+  const isCustomLoggedIn = Boolean(usesLogin) && loginState === 'logged-in';
+  const isCustomLoggedOut = Boolean(usesLogin) && loginState === 'logged-out';
+
   const entry = {
     url: pageUrl,
     username,
@@ -1692,6 +1927,12 @@ async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector,
     selector,
     scrollSelector: scrollSelector || null,
     scrollCount: scrollCount || 0,
+    usesLogin: Boolean(usesLogin),
+    loggedIn: isCustomLoggedIn,
+    loginError: isCustomLoggedOut,
+    loginPaused: isCustomLoggedOut,
+    authCookieNames: Array.isArray(authCookieNames) ? authCookieNames : [],
+    lastError: isCustomLoggedOut ? 'Login session required. Click Re-login to sign in.' : null,
     alias: feedName || username,
     filterKeywords: [],
     lastChecked: new Date().toISOString(),
@@ -1720,8 +1961,13 @@ async function saveCustomFeedCore({ pageUrl, selector, feedName, scrollSelector,
 }
 
 async function handleAddCustomFeed(parsed) {
-  const result = await startCustomWizard(parsed.fullUrl, mainWindow);
-  return await saveCustomFeedCore({ ...result, pageUrl: result.pageUrl || parsed.fullUrl });
+  isCustomLoginWindowOpen = true;
+  try {
+    const result = await startCustomWizard(parsed.fullUrl, mainWindow);
+    return await saveCustomFeedCore({ ...result, pageUrl: result.pageUrl || parsed.fullUrl });
+  } finally {
+    isCustomLoginWindowOpen = false;
+  }
 }
 
 function normalizeUrlForComparison(rawUrl) {
@@ -1787,7 +2033,7 @@ ipcMain.handle('toggle-feed-boost', (_e, username, platform) => {
   return feeds[idx];
 });
 
-async function renameFeedCore(username, platform, newAlias, filterKeywords) {
+async function renameFeedCore(username, platform, newAlias, filterKeywords, usesLogin) {
   const fs = require('fs');
   const feedDir = require('./rss-generator').getFeedDir();
   const currentFeeds = store.get('feeds');
@@ -1828,7 +2074,15 @@ async function renameFeedCore(username, platform, newAlias, filterKeywords) {
       }
 
       const activeKeywords = parsedKeywords !== null ? parsedKeywords : (f.filterKeywords || []);
-      f = { ...f, alias: aliasToUse, feedKey: newFeedKey, filterKeywords: activeKeywords };
+      const customLoginUpdates = {};
+      if ((f.platform || 'instagram') === 'custom' && usesLogin !== undefined) {
+        customLoginUpdates.usesLogin = Boolean(usesLogin);
+        if (!usesLogin) {
+          customLoginUpdates.loggedIn = false;
+          customLoginUpdates.loginError = false;
+        }
+      }
+      f = { ...f, alias: aliasToUse, feedKey: newFeedKey, filterKeywords: activeKeywords, ...customLoginUpdates };
       targetFeed = f;
       return f;
     }
@@ -1910,11 +2164,11 @@ async function renameFeedCore(username, platform, newAlias, filterKeywords) {
     mainWindow.webContents.send('feeds-updated');
   }
 
-  return store.get('feeds');
+  return await checkCustomFeedsLoginStatus();
 }
 
-ipcMain.handle('rename-feed', (_e, username, platform, newAlias, filterKeywords) => {
-  return renameFeedCore(username, platform, newAlias, filterKeywords);
+ipcMain.handle('rename-feed', (_e, username, platform, newAlias, filterKeywords, usesLogin) => {
+  return renameFeedCore(username, platform, newAlias, filterKeywords, usesLogin);
 });
 
 ipcMain.handle('remove-feed', (_e, username, platform) => {
@@ -1949,11 +2203,21 @@ async function refreshFeedCore(username, platform) {
       });
     } else if (platform === 'custom') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'custom');
-      profileData = await scrapeCustomSiteHeadless(feedEntry?.fullUrl, feedEntry?.selector, feedEntry?.alias || username, feedEntry?.scrollSelector, feedEntry?.scrollCount);
+      profileData = await scrapeCustomSiteHeadless(
+        feedEntry?.fullUrl,
+        feedEntry?.selector,
+        feedEntry?.alias || username,
+        feedEntry?.scrollSelector,
+        feedEntry?.scrollCount,
+        { usesLogin: Boolean(feedEntry?.usesLogin) }
+      );
     } else {
       profileData = await scrapeInstagramProfile(username);
     }
   } catch (err) {
+    if (platform === 'custom') {
+      recordCustomFeedFailure(username, err);
+    }
     addNotification('error', `Failed to refresh @${username}: ${err.message}`);
     throw err;
   }
@@ -1987,11 +2251,27 @@ async function refreshFeedCore(username, platform) {
         lastChecked: new Date().toISOString(),
         postCount: genResultRef?.postCount ?? profileData.posts.length,
         latestPostDate: latestPostDate || f.latestPostDate || null,
+        ...(platform === 'custom'
+          ? {
+              loginError: false,
+              lastError: null,
+              loginPaused: false,
+              loginPausedAt: null,
+              loginLockedOut: false,
+              loggedIn: f.usesLogin
+                ? (profileData?.loginState === 'logged-in' ? true : (profileData?.loginState === 'logged-out' ? false : f.loggedIn))
+                : false,
+            }
+          : {}),
       };
     }
     return f;
   });
   store.set('feeds', feeds);
+
+  if (platform === 'custom') {
+    recordCustomFeedSuccess(username, profileData.loginState);
+  }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('feeds-updated');
@@ -2009,6 +2289,11 @@ async function refreshAllCore() {
   const results = [];
 
   for (const feed of feedsSnapshot) {
+    if (isCustomFeedPaused(feed)) {
+      console.log(`[Refresh-all] Skipping @${feed.username} (custom feed login paused)`);
+      results.push({ username: feed.username, platform: feed.platform, success: false, error: 'Login paused' });
+      continue;
+    }
     try {
       const platform = feed.platform || 'instagram';
       let profileData;
@@ -2027,7 +2312,14 @@ async function refreshAllCore() {
           telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
         });
       } else if (platform === 'custom') {
-        profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount);
+        profileData = await scrapeCustomSiteHeadless(
+          feed.fullUrl,
+          feed.selector,
+          feed.alias || feed.username,
+          feed.scrollSelector,
+          feed.scrollCount,
+          { usesLogin: Boolean(feed.usesLogin) }
+        );
       } else {
         profileData = await scrapeInstagramProfile(feed.username);
       }
@@ -2045,6 +2337,16 @@ async function refreshAllCore() {
       if (idx !== -1) {
         currentFeeds[idx].lastChecked = new Date().toISOString();
         currentFeeds[idx].postCount = genResultAll?.postCount ?? profileData.posts.length;
+        if (platform === 'custom') {
+          currentFeeds[idx].loginError = false;
+          currentFeeds[idx].lastError = null;
+          currentFeeds[idx].loginPaused = false;
+          currentFeeds[idx].loginPausedAt = null;
+          currentFeeds[idx].loginLockedOut = false;
+          if (currentFeeds[idx].usesLogin) {
+            currentFeeds[idx].loggedIn = (profileData?.loginState === 'logged-in' ? true : (profileData?.loginState === 'logged-out' ? false : currentFeeds[idx].loggedIn));
+          }
+        }
         const realPostsRA = profileData.posts.filter(p => !p.timestampEstimated && p.timestamp);
         const postsWithTsRA = realPostsRA.length > 0 ? realPostsRA : profileData.posts.filter(p => p.timestamp);
         currentFeeds[idx].latestPostDate = postsWithTsRA.length > 0
@@ -2052,9 +2354,16 @@ async function refreshAllCore() {
           : currentFeeds[idx].latestPostDate || null;
         store.set('feeds', currentFeeds);
       }
+      if (platform === 'custom') {
+        recordCustomFeedSuccess(feed.username, profileData.loginState);
+      }
+      resolveNotificationsBySubstring(`@${feed.username}`);
       removeStaleNotificationsForFeed(feed.username);
       results.push({ username: feed.username, success: true });
     } catch (err) {
+      if ((feed.platform || 'instagram') === 'custom') {
+        recordCustomFeedFailure(feed.username, err);
+      }
       results.push({ username: feed.username, success: false, error: err.message });
       addNotification('error', `Refresh failed @${feed.username}: ${err.message}`);
     }
@@ -2106,29 +2415,290 @@ ipcMain.handle('open-external', (_e, url) => {
   shell.openExternal(url);
 });
 
-ipcMain.handle('open-custom-login', (_e, url) => {
+ipcMain.handle('open-custom-login', (_e, url, username) => {
   return new Promise((resolve) => {
+    isCustomLoginWindowOpen = true;
+
+    const feeds = store.get('feeds');
+    const targetFeed = username
+      ? feeds.find(f => f.username === username && (f.platform || 'instagram') === 'custom')
+      : feeds.find(f => (f.platform || 'instagram') === 'custom' && (f.fullUrl === url || f.url === url));
+    const targetUrl = url || targetFeed?.fullUrl || targetFeed?.url;
+    const siteLabel = targetFeed?.alias || targetFeed?.username || targetUrl || 'Custom Website';
+    const domainParts = getDomainPartsFromUrl(targetUrl);
+    const targetDomain = domainParts.baseDomain;
+
+    let directLoginUrl = null;
+    try {
+      const u = new URL(targetUrl.startsWith('http') ? targetUrl : 'https://' + targetUrl);
+      if (domainParts.hostname.includes('mobilism.org') || u.pathname.includes('phpbb') || u.pathname.endsWith('.php')) {
+        directLoginUrl = `${u.origin}/ucp.php?mode=login`;
+      } else {
+        directLoginUrl = `${u.origin}/login`;
+      }
+    } catch (_) {}
+
+    // If feed currently has a login error or targetUrl is search.php,
+    // open directly on the login URL so the user has the full login page with CAPTCHA
+    const shouldStartOnLogin = (targetFeed?.loginError || targetFeed?.loginPaused || (targetUrl && targetUrl.includes('search.php'))) && directLoginUrl;
+    const initialUrl = shouldStartOnLogin ? directLoginUrl : targetUrl;
+
     let loginWin = new BrowserWindow({
-      width: 1024,
-      height: 768,
+      width: 1100,
+      height: 820,
       parent: mainWindow || undefined,
       modal: false,
-      title: 'Login to Custom Website',
+      title: `Login — ${siteLabel}`,
       webPreferences: {
+        preload: path.join(__dirname, 'preload-custom.js'),
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
       },
     });
 
     loginWin.setMenuBarVisibility(false);
-    loginWin.loadURL(url).catch((err) => {
+    const realisticUA = getRealisticUserAgent();
+    loginWin.webContents.session.setUserAgent(realisticUA);
+    loginWin.webContents.setUserAgent(realisticUA);
+
+    // Allow OAuth/SSO popup windows (Google, Apple, GitHub, etc.)
+    loginWin.webContents.setWindowOpenHandler(() => ({
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 600,
+        height: 720,
+        parent: loginWin,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      },
+    }));
+
+    const injectLoginHelperBar = async () => {
+      if (!loginWin || loginWin.isDestroyed()) return;
+      const currentUrl = loginWin.webContents.getURL() || targetUrl;
+      const cookies = await getSiteCookies(currentUrl);
+      const loginInfo = await detectLoginState(loginWin.webContents);
+
+      const isActuallyLoggedIn = loginInfo.state === 'logged-in' || cookies.isPhpBBLoggedIn;
+      const isLockedOut = Boolean(loginInfo.lockedOut);
+      const isGuest = cookies.isGuest || loginInfo.state === 'logged-out';
+
+      let statusHtml = '';
+      if (isActuallyLoggedIn) {
+        statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(52,211,153,0.18);color:#34d399;border:1px solid rgba(52,211,153,0.45);padding:3px 9px;border-radius:5px;font-weight:700;font-size:11px;white-space:nowrap;flex-shrink:0;">✅ LOGGED IN</span>';
+      } else if (isLockedOut) {
+        statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.55);padding:3px 9px;border-radius:5px;font-weight:700;font-size:11px;white-space:nowrap;flex-shrink:0;" title="Website reports too many login attempts. Enter username, password AND solve the CAPTCHA image below to unlock.">⚠️ LOCKED OUT — SOLVE CAPTCHA BELOW</span>';
+      } else if (isGuest) {
+        statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(251,191,36,0.18);color:#fbbf24;border:1px solid rgba(251,191,36,0.45);padding:3px 9px;border-radius:5px;font-weight:600;font-size:11px;white-space:nowrap;flex-shrink:0;">🔓 NOT LOGGED IN</span>';
+      } else {
+        statusHtml = `<span id="__unsocial_relogin_status" style="color:#a8b2d1;font-size:11px;white-space:nowrap;flex-shrink:0;">${cookies.nonNoise.length} cookies</span>`;
+      }
+
+      const activeLoginTarget = loginInfo.detectedLoginUrl || directLoginUrl;
+
+      const js = `(function() {
+        var existing = document.getElementById('__unsocial_relogin_bar');
+        if (existing) existing.remove();
+        var bar = document.createElement('div');
+        bar.id = '__unsocial_relogin_bar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;padding:7px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);border-bottom:2px solid #7c5cfc;user-select:none;';
+        bar.innerHTML = \`
+          <span style="background:#7c5cfc;color:#fff;font-weight:700;font-size:11px;padding:3px 7px;border-radius:5px;letter-spacing:0.3px;flex-shrink:0;">CUSTOM LOGIN</span>
+          <button id="__unsocial_relogin_back" title="Back" style="background:rgba(255,255,255,0.08);color:#ccc;border:1px solid rgba(255,255,255,0.15);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:12px;">←</button>
+          <button id="__unsocial_relogin_reload" title="Reload" style="background:rgba(255,255,255,0.08);color:#ccc;border:1px solid rgba(255,255,255,0.15);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:12px;">↻</button>
+          \${${JSON.stringify(Boolean(activeLoginTarget))} ? \`<button id="__unsocial_relogin_goto_login" title="Navigate to website login page (with CAPTCHA)" style="background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.45);padding:4px 9px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11px;white-space:nowrap;flex-shrink:0;">🔑 Login Page</button>\` : ''}
+          \${${JSON.stringify(Boolean(targetUrl && targetUrl !== activeLoginTarget))} ? \`<button id="__unsocial_relogin_goto_feed" title="Navigate to feed content page" style="background:rgba(255,255,255,0.08);color:#e2e8f0;border:1px solid rgba(255,255,255,0.18);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0;">📄 Feed Page</button>\` : ''}
+          <input id="__unsocial_relogin_url" type="text" value="\${location.href.replace(/"/g, '&quot;')}" style="flex:1;min-width:120px;background:rgba(0,0,0,0.35);color:#e8e8f0;border:1px solid rgba(255,255,255,0.16);border-radius:5px;padding:4px 8px;font-size:11px;outline:none;" />
+          ${statusHtml}
+          <button id="__unsocial_relogin_clear" title="Clear website session cookies (preserves Cloudflare) and reload login page" style="background:rgba(248,113,113,0.15);color:#fca5a5;border:1px solid rgba(248,113,113,0.35);padding:5px 9px;border-radius:5px;font-weight:600;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;">🧹 Clear Cookies</button>
+          <button id="__unsocial_relogin_done" style="background:${isActuallyLoggedIn ? '#34d399' : '#4f46e5'};color:#fff;border:none;padding:5px 12px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;">${isActuallyLoggedIn ? '✓ Done — Save & Refresh' : '✓ Done'}</button>
+        \`;
+        document.documentElement.appendChild(bar);
+        document.body.style.setProperty('margin-top', '44px', 'important');
+
+        document.getElementById('__unsocial_relogin_back').addEventListener('click', () => history.back());
+        document.getElementById('__unsocial_relogin_reload').addEventListener('click', () => location.reload());
+        var btnLogin = document.getElementById('__unsocial_relogin_goto_login');
+        if (btnLogin) btnLogin.addEventListener('click', () => { location.href = ${JSON.stringify(activeLoginTarget || '')}; });
+        var btnFeed = document.getElementById('__unsocial_relogin_goto_feed');
+        if (btnFeed) btnFeed.addEventListener('click', () => { location.href = ${JSON.stringify(targetUrl || '')}; });
+        var urlInput = document.getElementById('__unsocial_relogin_url');
+        urlInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && urlInput.value.trim()) {
+            var v = urlInput.value.trim();
+            if (!/^https?:\\/\\//i.test(v)) v = 'https://' + v;
+            location.href = v;
+          }
+        });
+        document.getElementById('__unsocial_relogin_clear').addEventListener('click', () => {
+          var btn = document.getElementById('__unsocial_relogin_clear');
+          btn.textContent = 'Clearing...';
+          btn.disabled = true;
+          window.unsocial.send('custom-relogin-clear');
+        });
+        document.getElementById('__unsocial_relogin_done').addEventListener('click', () => {
+          var btn = document.getElementById('__unsocial_relogin_done');
+          btn.textContent = 'Checking...';
+          btn.disabled = true;
+          window.unsocial.send('custom-relogin-done');
+        });
+      })();`;
+
+      loginWin.webContents.executeJavaScript(js).catch(() => {});
+    };
+
+    loginWin.webContents.on('did-finish-load', injectLoginHelperBar);
+    loginWin.webContents.on('did-navigate-in-page', injectLoginHelperBar);
+
+    let finalized = false;
+    const finalizeLogin = async (isLoggedIn, shouldRefresh = true) => {
+      if (finalized) return;
+      finalized = true;
+      isCustomLoginWindowOpen = false;
+      ipcMain.removeListener('custom-wizard-msg', onReloginMsg);
+
+      try {
+        await session.defaultSession.cookies.flushStore();
+      } catch (_) {}
+
+      const { nonNoise, authLike } = await getSiteCookies(targetUrl);
+      const authCookieNames = (authLike.length > 0 ? authLike : nonNoise).map((c) => c.name);
+
+      if (isLoggedIn) {
+        markCustomDomainLoggedIn(targetDomain, targetFeed?.username, authCookieNames);
+      } else if (targetFeed?.username) {
+        recordCustomFeedFailure(targetFeed.username, new Error('Login not completed — session remains logged out.'));
+      }
+
+      let refreshed = false;
+      let refreshError = null;
+      if (shouldRefresh && isLoggedIn && targetFeed?.username) {
+        try {
+          await refreshFeedCore(targetFeed.username, 'custom');
+          refreshed = true;
+        } catch (err) {
+          refreshError = err.message;
+        }
+      }
+
+      resolve({
+        success: true,
+        usesLogin: true,
+        loggedIn: isLoggedIn && !refreshError,
+        refreshed,
+        refreshError,
+        cookieCount: nonNoise.length,
+      });
+    };
+
+    const onReloginMsg = async (_event, channel) => {
+      if (!loginWin || loginWin.isDestroyed()) return;
+      if (channel === 'custom-relogin-clear') {
+        const currentUrl = loginWin.webContents.getURL() || targetUrl;
+        await clearSiteCookiesAndStorage(currentUrl, true);
+        if (targetUrl && targetUrl !== currentUrl) {
+          await clearSiteCookiesAndStorage(targetUrl, true);
+        }
+        if (directLoginUrl) {
+          loginWin.loadURL(directLoginUrl);
+        } else {
+          loginWin.webContents.reload();
+        }
+      } else if (channel === 'custom-relogin-done') {
+        const cookies = await getSiteCookies(loginWin.webContents.getURL() || targetUrl);
+        const pageLogin = await detectLoginState(loginWin.webContents);
+        const isActuallyLoggedIn = pageLogin.state === 'logged-in' || cookies.isPhpBBLoggedIn;
+
+        if (!isActuallyLoggedIn) {
+          const promptJs = `confirm("UnSocial detected that you may still be logged out of this website.\\n\\nIf you haven't finished signing in (or haven't solved the CAPTCHA), the feed will not be able to fetch private content.\\n\\nClick OK to close anyway, or Cancel to stay on the page and finish logging in.");`;
+          const proceed = await loginWin.webContents.executeJavaScript(promptJs).catch(() => true);
+          if (!proceed) {
+            injectLoginHelperBar();
+            return;
+          }
+        }
+
+        const winToClose = loginWin;
+        loginWin = null;
+        if (winToClose && !winToClose.isDestroyed()) {
+          winToClose.close();
+        }
+        await finalizeLogin(isActuallyLoggedIn, isActuallyLoggedIn);
+      }
+    };
+
+    ipcMain.on('custom-wizard-msg', onReloginMsg);
+
+    loginWin.loadURL(initialUrl).catch((err) => {
       console.error('[Custom Login] Failed to load URL:', err.message);
     });
 
-    loginWin.on('closed', () => {
-      resolve({ success: true });
+    loginWin.on('closed', async () => {
+      loginWin = null;
+      isCustomLoginWindowOpen = false;
+      const cookies = await getSiteCookies(targetUrl);
+      const isPhpBBSite = (targetDomain && targetDomain.includes('mobilism.org')) || cookies.all.some(c => /(^|_)u$/i.test(c.name) || /(^|_)sid$/i.test(c.name));
+      const isLogged = isPhpBBSite
+        ? Boolean(cookies.isPhpBBLoggedIn)
+        : (cookies.authLike.length > 0 && !cookies.isGuest);
+      finalizeLogin(isLogged, isLogged);
     });
   });
+});
+
+ipcMain.handle('toggle-custom-login', async (_e, username, usesLogin) => {
+  const feeds = store.get('feeds');
+  const idx = feeds.findIndex(f => f.username === username && (f.platform || 'instagram') === 'custom');
+  if (idx === -1) throw new Error('Custom feed not found');
+
+  const nextUsesLogin = usesLogin !== undefined ? Boolean(usesLogin) : !feeds[idx].usesLogin;
+  feeds[idx].usesLogin = nextUsesLogin;
+
+  if (nextUsesLogin) {
+    const { nonNoise, authLike } = await getSiteCookies(feeds[idx].fullUrl || feeds[idx].url);
+    feeds[idx].loggedIn = (nonNoise.length > 0 || authLike.length > 0) && !feeds[idx].loginError;
+    if (authLike.length > 0 || nonNoise.length > 0) {
+      feeds[idx].authCookieNames = (authLike.length > 0 ? authLike : nonNoise).map(c => c.name);
+    }
+  } else {
+    feeds[idx].loggedIn = false;
+    feeds[idx].loginError = false;
+    resolveNotificationsBySubstring(`(@${username})`);
+  }
+
+  store.set('feeds', feeds);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+  return feeds[idx];
+});
+
+ipcMain.handle('logout-custom-feed', async (_e, username) => {
+  const feeds = store.get('feeds');
+  const idx = feeds.findIndex(f => f.username === username && (f.platform || 'instagram') === 'custom');
+  if (idx === -1) throw new Error('Custom feed not found');
+
+  const targetUrl = feeds[idx].fullUrl || feeds[idx].url;
+  const targetDomain = getDomainPartsFromUrl(targetUrl)?.baseDomain;
+  await clearSiteCookiesAndStorage(targetUrl);
+
+  for (let i = 0; i < feeds.length; i++) {
+    if ((feeds[i].platform || 'instagram') !== 'custom') continue;
+    const fDomain = getDomainPartsFromUrl(feeds[i].fullUrl || feeds[i].url)?.baseDomain;
+    if (feeds[i].username === username || (targetDomain && fDomain === targetDomain)) {
+      feeds[i].loggedIn = false;
+      feeds[i].authCookieNames = [];
+    }
+  }
+
+  store.set('feeds', feeds);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('feeds-updated');
+  }
+  return feeds[idx];
 });
 
 ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {

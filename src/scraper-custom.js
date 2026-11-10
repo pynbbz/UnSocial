@@ -12,16 +12,237 @@ const { getRealisticUserAgent } = require('./user-agent');
  *      selector (for auto-refresh / manual refresh).
  */
 
+// ── Cookie & Login Detection Helpers ───────────────────────────────────────
+
+const NOISE_COOKIE_REGEX = /^(_ga|_gid|_gat|_gcl_|_fbp|_fbc|__utma|__utmb|__utmc|__utmt|__utmz|_hj|mp_|ajs_|amplitude|intercom|hubspot|__cf_bm|cf_clearance|_cfuvid|Optanon|CookieConsent|cookie_notice|euconsent|gdpr|ccpa|_pk_|_sp_|_uet|_pin_|_ttp|mbox|s_cc|s_sq|s_vi|AMCV_|AMCVS_)/i;
+
+const AUTH_COOKIE_REGEX = /(session|sess|token|auth|jwt|sid|uid|userid|user_id|logged_in|login|remember|pass|acct|account|credential|bearer|access_|refresh_|id_token|connect\.sid|phpsessid|jsessionid|asp\.net_sessionid|laravel_session|wordpress_logged_in|xf_user|xf_session|_forum_session|patron|member|sub_)/i;
+
+// Stricter pattern used for auto-detection: requires the auth keyword to be a
+// separate name segment, and excludes well-known tracking / anti-fraud cookies
+// (which are present for anonymous visitors too).
+const STRICT_AUTH_COOKIE_REGEX = /(^|[_.-])(sid|sessionid|session|sess|auth|token|jwt|logged_?in|remember(_?me)?|user_?id|xf_user|wordpress_logged_in_[a-f0-9]+)([_.-]|$)/i;
+const TRACKING_COOKIE_REGEX = /(stripe|sift|_rdt|ttcs|csrf|xsrf|__cf|gamera|fsuid|_ga|_fb|hubspot|intercom|amplitude|optimizely|segment|datadog|_dd_|newrelic|nr_|hotjar|_hj)/i;
+
+function isStrictAuthCookieName(name) {
+  return Boolean(name) && STRICT_AUTH_COOKIE_REGEX.test(name) && !TRACKING_COOKIE_REGEX.test(name);
+}
+
+/**
+ * Check if the cookie jar represents an anonymous / guest session on known forum/CMS platforms.
+ * For phpBB (e.g. Mobilism): [prefix]_u === '1' represents the ANONYMOUS user.
+ */
+function isGuestSession(cookies) {
+  if (!Array.isArray(cookies)) return false;
+  // phpBB: [prefix]_u === '1' means anonymous/guest
+  const uCookie = cookies.find((c) => {
+    if (!/(^|_)u$/i.test(c.name)) return false;
+    const val = String(c.value || '').replace(/['"]/g, '').trim();
+    return val === '1';
+  });
+  if (uCookie) {
+    const kCookie = cookies.find((c) => /(^|_)k$/i.test(c.name) && String(c.value || '').replace(/['"]/g, '').trim().length > 0);
+    if (!kCookie) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if the cookie jar contains a confirmed registered user session on phpBB.
+ * In phpBB, [prefix]_u > 1 (e.g. 23412) is the registered user ID.
+ */
+function hasPhpBBUid(cookies) {
+  if (!Array.isArray(cookies)) return false;
+  const uCookie = cookies.find((c) => /(^|_)u$/i.test(c.name));
+  if (uCookie) {
+    const uid = parseInt(String(uCookie.value || '').replace(/['"]/g, '').trim(), 10);
+    return !isNaN(uid) && uid > 1;
+  }
+  return false;
+}
+
+/**
+ * In-page script that inspects the DOM for signs of being logged in or out.
+ * Many sites (e.g. phpBB forums) hand out "session" cookies to guests too, so
+ * cookies alone can't tell us whether the user is actually logged in.
+ * Returns { state: 'logged-in' | 'logged-out' | 'unknown', hasLogout, hasLoginLink,
+ *           hasPassword, loginRequiredMsg, lockedOut, detectedLoginUrl }.
+ */
+const DETECT_LOGIN_STATE_JS = `
+  (function() {
+    try {
+      var LOGOUT_HREF = /(logout|log-out|log_out|signout|sign-out|sign_out|mode=logout|action=logout|do=logout)/i;
+      var LOGOUT_TEXT = /\\b(log\\s*out|logout|sign\\s*out|signout|log\\s*off|sign\\s*off|disconnect)\\b/i;
+      var LOGIN_HREF = /(\\/login|\\/signin|\\/sign-in|\\/log-in|mode=login|action=login|do=login|ucp\\.php\\?mode=login|wp-login\\.php)/i;
+      var LOGIN_TEXT = /^\\s*(log\\s*in|login|sign\\s*in|signin|log\\s*in\\s*\\/\\s*register|login\\s*\\/\\s*register|sign\\s*in\\s*\\/\\s*register)\\s*$/i;
+      var REQUIRED_MSG = /(you must be (registered and )?logged in|must be logged in|please (log|sign) in to|not (permitted|authori[sz]ed) to (use|view|access)|login required|sign in to continue|you need to (log|sign) in|session (has )?expired)/i;
+      var LOCKOUT_MSG = /(too many (failed )?(login )?attempts|maximum (allowed )?number of login attempts|exceeded the maximum.*login|temporarily (locked|blocked)|try again later)/i;
+
+      var hasLogout = false, hasLoginLink = false, detectedLoginUrl = '';
+      var links = document.querySelectorAll('a[href], button, [role="button"], input[type="submit"]');
+      for (var i = 0; i < links.length && i < 3000; i++) {
+        var el = links[i];
+        if (el.closest && el.closest('#__unsocial_relogin_bar, #__unsocial_toolbar')) continue;
+        var href = el.getAttribute('href') || el.getAttribute('formaction') || '';
+        var text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+        if (LOGOUT_HREF.test(href) || LOGOUT_TEXT.test(text)) {
+          hasLogout = true;
+        } else if (LOGIN_HREF.test(href) || LOGIN_TEXT.test(text)) {
+          hasLoginLink = true;
+          if (!detectedLoginUrl && href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+            try {
+              detectedLoginUrl = new URL(href, location.href).href;
+            } catch (_) {}
+          }
+        }
+      }
+      var forms = document.querySelectorAll('form');
+      for (var j = 0; j < forms.length; j++) {
+        var action = forms[j].getAttribute('action') || '';
+        if (LOGOUT_HREF.test(action)) hasLogout = true;
+        if (!detectedLoginUrl && LOGIN_HREF.test(action)) {
+          try {
+            detectedLoginUrl = new URL(action, location.href).href;
+          } catch (_) {}
+        }
+      }
+      var hasPassword = !!document.querySelector('input[type="password"]');
+      var bodyText = (document.body && document.body.innerText || '').slice(0, 25000);
+      var loginRequiredMsg = REQUIRED_MSG.test(bodyText);
+      var lockedOut = LOCKOUT_MSG.test(bodyText);
+
+      var isLoginPage = /(\\/login|\\/signin|\\/sign-in|\\/log-in|mode=login|wp-login\\.php)/i.test(location.href);
+
+      var state = 'unknown';
+      if (hasLogout) {
+        state = 'logged-in';
+      } else if (isLoginPage || hasPassword || loginRequiredMsg || hasLoginLink || lockedOut) {
+        state = 'logged-out';
+      }
+
+      return {
+        state: state,
+        hasLogout: hasLogout,
+        hasLoginLink: hasLoginLink,
+        hasPassword: hasPassword,
+        loginRequiredMsg: loginRequiredMsg,
+        lockedOut: lockedOut,
+        detectedLoginUrl: detectedLoginUrl,
+        url: location.href
+      };
+    } catch (e) {
+      return { state: 'unknown', error: String(e) };
+    }
+  })();
+`;
+
+async function detectLoginState(webContents) {
+  try {
+    if (!webContents || webContents.isDestroyed()) return { state: 'unknown' };
+    return (await webContents.executeJavaScript(DETECT_LOGIN_STATE_JS)) || { state: 'unknown' };
+  } catch (_) {
+    return { state: 'unknown' };
+  }
+}
+
+function getDomainPartsFromUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl.startsWith('http') ? rawUrl : 'https://' + rawUrl);
+    const hostname = u.hostname.toLowerCase();
+    const parts = hostname.split('.');
+    const baseDomain = parts.length > 2 ? parts.slice(-2).join('.') : hostname;
+    return { hostname, baseDomain, origin: u.origin };
+  } catch (_) {
+    return { hostname: '', baseDomain: '', origin: '' };
+  }
+}
+
+function cookieMatchesDomain(cookieDomain, hostname, baseDomain) {
+  if (!cookieDomain || !hostname) return false;
+  const clean = cookieDomain.replace(/^\./, '').toLowerCase();
+  return (
+    clean === hostname ||
+    clean === baseDomain ||
+    hostname.endsWith('.' + clean) ||
+    clean.endsWith('.' + baseDomain)
+  );
+}
+
+async function getSiteCookies(rawUrl) {
+  const { hostname, baseDomain } = getDomainPartsFromUrl(rawUrl);
+  if (!hostname) return { all: [], nonNoise: [], authLike: [], isGuest: false, isPhpBBLoggedIn: false };
+
+  try {
+    const allCookies = await session.defaultSession.cookies.get({});
+    const nowSec = Date.now() / 1000;
+    const matching = allCookies.filter((c) => {
+      if (!c || !c.name || !c.value) return false;
+      if (c.expirationDate && c.expirationDate < nowSec) return false;
+      return cookieMatchesDomain(c.domain, hostname, baseDomain);
+    });
+
+    const isGuest = isGuestSession(matching);
+    const isPhpBBLoggedIn = hasPhpBBUid(matching);
+    const nonNoise = matching.filter((c) => !NOISE_COOKIE_REGEX.test(c.name));
+    let authLike = nonNoise.filter((c) => isStrictAuthCookieName(c.name));
+
+    const hasPhpBBCookies = matching.some((c) => /(^|_)sid$/i.test(c.name) || /(^|_)u$/i.test(c.name));
+    if (isGuest || (hasPhpBBCookies && !isPhpBBLoggedIn)) {
+      // Exclude guest/anonymous phpBB session cookies from authLike so guest visitors aren't treated as logged-in
+      authLike = authLike.filter((c) => !/(^|_)sid$/i.test(c.name) && !/(^|_)u$/i.test(c.name) && !/(^|_)k$/i.test(c.name));
+    }
+
+    return { all: matching, nonNoise, authLike, isGuest, isPhpBBLoggedIn };
+  } catch (_) {
+    return { all: [], nonNoise: [], authLike: [], isGuest: false, isPhpBBLoggedIn: false };
+  }
+}
+
+async function clearSiteCookiesAndStorage(rawUrl, preserveCloudflare = true) {
+  const { hostname, baseDomain, origin } = getDomainPartsFromUrl(rawUrl);
+  if (!hostname) return;
+
+  try {
+    if (origin) {
+      // When preserving Cloudflare cookies, do not let Electron wipe the cookie jar
+      const storages = preserveCloudflare
+        ? ['localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage']
+        : ['cookies', 'localstorage', 'indexdb', 'websql', 'serviceworkers', 'cachestorage'];
+      await session.defaultSession.clearStorageData({ origin, storages });
+      const wwwOrigin = origin.replace('://', '://www.');
+      if (wwwOrigin !== origin) {
+        await session.defaultSession.clearStorageData({ origin: wwwOrigin, storages }).catch(() => {});
+      }
+    }
+  } catch (_) {}
+
+  try {
+    const allCookies = await session.defaultSession.cookies.get({});
+    for (const cookie of allCookies) {
+      if (cookieMatchesDomain(cookie.domain, hostname, baseDomain)) {
+        // Preserve Cloudflare clearance cookies so clearing session cookies doesn't trap the user in Cloudflare challenge loops
+        if (preserveCloudflare && /^(__cf|cf_clearance|_cfuvid)/i.test(cookie.name)) {
+          continue;
+        }
+        const cleanDomain = cookie.domain.replace(/^\./, '');
+        const protocol = cookie.secure ? 'https' : 'http';
+        const cookieUrl = `${protocol}://${cleanDomain}${cookie.path || '/'}`;
+        await session.defaultSession.cookies.remove(cookieUrl, cookie.name).catch(() => {});
+      }
+    }
+  } catch (_) {}
+}
+
 // ── Interactive Wizard ─────────────────────────────────────────────────────
 
 /**
  * Open the Custom Website Wizard.
  * @param {string} siteUrl – The URL the user entered
  * @param {BrowserWindow} parentWindow – The main app window
- * @returns {Promise<{pageUrl, selector, feedName, profileData}>}
+ * @returns {Promise<{pageUrl, selector, feedName, usesLogin, authCookieNames, profileData}>}
  */
 function startCustomWizard(siteUrl, parentWindow) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     // Normalise URL
     if (!/^https?:\/\//i.test(siteUrl)) siteUrl = 'https://' + siteUrl;
 
@@ -33,6 +254,9 @@ function startCustomWizard(siteUrl, parentWindow) {
       origin = siteUrl;
     }
 
+    const initialCookies = await getSiteCookies(siteUrl);
+    const initialCookieNames = new Set(initialCookies.nonNoise.map((c) => c.name));
+
     const wizardWin = new BrowserWindow({
       width: 1280,
       height: 900,
@@ -43,14 +267,21 @@ function startCustomWizard(siteUrl, parentWindow) {
         preload: path.join(__dirname, 'preload-custom.js'),
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: false,
       },
     });
 
     wizardWin.setMenuBarVisibility(false);
 
+    // Allow OAuth popups (Google, Apple, SSO, etc.) during login
+    wizardWin.webContents.setWindowOpenHandler(() => {
+      return { action: 'allow' };
+    });
+
     // ── State machine ────────────────────────────────────────────────────
     let step = 'login';   // login → navigate → select → done
     let targetUrl = siteUrl;
+    let userMarkedLogin = null; // true | false | null
     let settled = false;
 
     const finish = (err, result) => {
@@ -73,14 +304,18 @@ function startCustomWizard(siteUrl, parentWindow) {
     });
 
     // ── Messages from injected JS (via preload bridge) ──────────────────
-    wizardWin.webContents.on('ipc-message', (_event, channel, subChannel, data) => {
+    wizardWin.webContents.on('ipc-message', async (_event, channel, subChannel, data) => {
       if (channel !== 'custom-wizard-msg') return;
 
       switch (subChannel) {
-        case 'login-done':
+        case 'login-done': {
+          if (data && typeof data.usesLogin === 'boolean') {
+            userMarkedLogin = data.usesLogin;
+          }
           step = 'navigate';
           injectToolbar(wizardWin, step, targetUrl).catch(() => { });
           break;
+        }
 
         case 'navigate-to': {
           targetUrl = data;
@@ -89,13 +324,21 @@ function startCustomWizard(siteUrl, parentWindow) {
           break;
         }
 
-        case 'start-selector':
+        case 'start-selector': {
           step = 'select';
-          injectSelector(wizardWin).catch(() => { });
+          // Pre-check "Uses Login" only if the user said they logged in, or the
+          // page itself shows a logged-in session (logout link). Cookies alone
+          // are unreliable — many sites give guests "session" cookies too.
+          const pageLogin = await detectLoginState(wizardWin.webContents);
+          const defaultUsesLogin = userMarkedLogin !== null
+            ? userMarkedLogin
+            : pageLogin.state === 'logged-in';
+          injectSelector(wizardWin, defaultUsesLogin).catch(() => { });
           break;
+        }
 
         case 'confirm-items': {
-          // data = { selector, items: [...], feedName }
+          // data = { selector, items: [...], feedName, usesLogin }
           // Transition to scroll step so user can optionally configure scrolling
           step = 'scroll';
           // Stash the selection data for after the scroll step
@@ -111,12 +354,30 @@ function startCustomWizard(siteUrl, parentWindow) {
           const scrollSelector = (data && data.scrollSelector) || null;
           const scrollCount = (data && data.scrollCount) || 0;
           const profileData = buildProfileData(selData.items, selData.feedName, targetUrl);
+          const finalCookies = await getSiteCookies(targetUrl);
+          const usesLogin = typeof selData.usesLogin === 'boolean'
+            ? selData.usesLogin
+            : Boolean(userMarkedLogin);
+          const authCookieNames = usesLogin
+            ? (finalCookies.authLike.length > 0 ? finalCookies.authLike : finalCookies.nonNoise).map((c) => c.name)
+            : [];
+          const pageLogin = await detectLoginState(wizardWin.webContents);
+          const isPhpBBLoggedIn = finalCookies.isPhpBBLoggedIn;
+          const isGuest = finalCookies.isGuest;
+          const loginState = (pageLogin.state === 'logged-in' || isPhpBBLoggedIn)
+            ? 'logged-in'
+            : (isGuest || pageLogin.state === 'logged-out')
+              ? 'logged-out'
+              : pageLogin.state;
           finish(null, {
             pageUrl: targetUrl,
             selector: selData.selector,
             feedName: selData.feedName || deriveFeedName(targetUrl),
             scrollSelector,
             scrollCount,
+            usesLogin,
+            authCookieNames,
+            loginState,
             profileData,
           });
           break;
@@ -154,7 +415,7 @@ function startCustomWizard(siteUrl, parentWindow) {
  * @param {number} scrollCount – Number of scroll-down actions to perform before extracting
  * @returns {Promise<{fullName, biography, posts[]}>}
  */
-async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelector, scrollCount) {
+async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelector, scrollCount, options = {}) {
   const MAX_ATTEMPTS = 2;
   let lastError;
 
@@ -226,7 +487,7 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
         await sleep(2000);
       }
 
-      const items = await hidden.webContents.executeJavaScript(`
+      const extractionResult = await hidden.webContents.executeJavaScript(`
         (function() {
           var els = document.querySelectorAll(${JSON.stringify(selector)});
           var items = [];
@@ -234,14 +495,76 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
             ${EXTRACT_ITEM_JS}
             items.push(item);
           });
-          return items;
+          var hasPasswordInput = !!document.querySelector('input[type="password"]');
+          var currentUrl = window.location.href || '';
+          return {
+            items: items,
+            hasPasswordInput: hasPasswordInput,
+            currentUrl: currentUrl,
+          };
         })();
       `);
+      const loginInfo = await detectLoginState(hidden.webContents);
+      const siteCookies = await getSiteCookies(pageUrl);
 
-      return buildProfileData(items, feedName, pageUrl);
+      const items = (extractionResult && extractionResult.items) || [];
+      const currentUrl = (extractionResult && extractionResult.currentUrl) || hidden.webContents.getURL() || '';
+      const loginUrlPattern = /\/(login|signin|sign-in|log-in|auth|authenticate|sso|checkpoint|session\/new)\b|mode=login/i;
+      const redirectedToLogin = !loginUrlPattern.test(pageUrl || '') && loginUrlPattern.test(currentUrl);
+
+      const isLoggedOut = Boolean(
+        redirectedToLogin ||
+        loginInfo.state === 'logged-out' ||
+        loginInfo.lockedOut ||
+        siteCookies.isGuest
+      );
+
+      // For feeds that depend on a login, verify the page actually shows a
+      // logged-in session. Sites like phpBB forums still render a few generic
+      // items for guests, so "found items" alone doesn't prove we're logged in.
+      if (options.usesLogin && isLoggedOut) {
+        const err = new Error(
+          loginInfo.lockedOut
+            ? `"${feedName || pageUrl}" — website reports too many login attempts. Auto-refresh paused; wait for the lockout to expire, then re-login.`
+            : redirectedToLogin
+              ? `"${feedName || pageUrl}" — website redirected to its login page. Session expired; auto-refresh paused until you re-login.`
+              : siteCookies.isGuest
+                ? `"${feedName || pageUrl}" — guest session detected. Session expired; auto-refresh paused until you re-login.`
+                : `"${feedName || pageUrl}" — page shows you are not logged in. Session expired; auto-refresh paused until you re-login.`
+        );
+        err.isLoginError = true;
+        err.lockedOut = Boolean(loginInfo.lockedOut);
+        throw err;
+      }
+
+      if (items.length === 0) {
+        const hasPassword = Boolean(extractionResult && extractionResult.hasPasswordInput);
+        const isLoginIssue = Boolean(isLoggedOut || hasPassword || options.usesLogin);
+
+        const errMsg = loginInfo.lockedOut
+          ? `"${feedName || pageUrl}" — website reports too many login attempts. Auto-refresh paused; wait for the lockout to expire, then re-login.`
+          : redirectedToLogin
+            ? `Website redirected to login page (${feedName || pageUrl}) — session expired, please re-login.`
+            : isLoginIssue
+              ? `Found no items for "${feedName || pageUrl}" — login session may have expired. Click Re-login on the feed card.`
+              : `Found no items for "${feedName || pageUrl}" matching selector "${selector}".`;
+        const err = new Error(errMsg);
+        err.isLoginError = isLoginIssue;
+        err.lockedOut = Boolean(loginInfo.lockedOut);
+        throw err;
+      }
+
+      const profileData = buildProfileData(items, feedName, pageUrl);
+      profileData.loginState = (loginInfo.state === 'logged-in' || siteCookies.isPhpBBLoggedIn)
+        ? 'logged-in'
+        : (isLoggedOut ? 'logged-out' : loginInfo.state);
+      return profileData;
     } catch (err) {
       lastError = err;
       console.error(`[Custom-scraper] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${pageUrl}: ${err.message}`);
+      // Never retry login failures — repeated hits can trigger the site's
+      // login-attempt lockout.
+      if (err.isLoginError) break;
       if (attempt < MAX_ATTEMPTS) {
         // Wait before retrying to let transient issues resolve
         await sleep(3000);
@@ -467,12 +790,16 @@ async function injectToolbar(win, step, targetUrl) {
 
       if (step === 'login') {
         bar.innerHTML =
-          '<span style="flex:1;">🔐 <b>Step 1:</b> Log in to this website, then click <b>Continue</b></span>' +
-          '<button id="__us_btn_continue" style="background:#e1306c;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">Continue →</button>' +
+          '<span style="flex:1;">🔐 <b>Step 1:</b> Log in to this website (if needed), then continue:</span>' +
+          '<button id="__us_btn_logged_in" style="background:#4ade80;color:#111;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;" title="Mark this feed as using login credentials">🔐 I Logged In →</button>' +
+          '<button id="__us_btn_continue" style="background:#e1306c;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;" title="Continue without marking as login-required">Skip Login (Public) →</button>' +
           '<button id="__us_btn_cancel" style="background:transparent;color:#888;border:1px solid #444;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;">Cancel</button>';
 
+        bar.querySelector('#__us_btn_logged_in').onclick = function() {
+          window.unsocial.send('login-done', { usesLogin: true });
+        };
         bar.querySelector('#__us_btn_continue').onclick = function() {
-          window.unsocial.send('login-done');
+          window.unsocial.send('login-done', { usesLogin: false });
         };
         bar.querySelector('#__us_btn_cancel').onclick = function() {
           window.unsocial.send('cancel');
@@ -523,7 +850,7 @@ async function injectToolbar(win, step, targetUrl) {
   } catch (_) { }
 }
 
-async function injectSelector(win) {
+async function injectSelector(win, defaultUsesLogin = false) {
   if (win.isDestroyed()) return;
 
   const js = `
@@ -536,10 +863,16 @@ async function injectSelector(win) {
       bar.id = '__unsocial_toolbar';
       bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#1a1a2e;color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;font-family:system-ui,-apple-system,sans-serif;font-size:14px;box-shadow:0 2px 12px rgba(0,0,0,0.5);';
 
+      var defaultUsesLogin = ${JSON.stringify(Boolean(defaultUsesLogin))};
+
       bar.innerHTML =
         '<span id="__us_instructions" style="flex:1;">🎯 <b>Step 3:</b> Hover over items and click on <b>one repeating item</b> (e.g. one post, one article, one card)</span>' +
         '<span id="__us_count" style="display:none;flex:1;color:#4ade80;font-weight:600;">✓ Found <b id="__us_num">0</b> similar items</span>' +
         '<button id="__us_btn_expand" style="display:none;background:#6366f1;color:#fff;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;" title="Select a larger parent container (e.g. whole card instead of inner text)">⬆ Expand Area</button>' +
+        '<label id="__us_login_label" style="display:none;align-items:center;gap:6px;cursor:pointer;background:rgba(255,255,255,0.06);border:1px solid #444;padding:6px 10px;border-radius:6px;font-size:12px;user-select:none;" title="Mark this feed as using login credentials so UnSocial indicates login status and alerts if session expires">' +
+          '<input id="__us_uses_login" type="checkbox" ' + (defaultUsesLogin ? 'checked' : '') + ' style="cursor:pointer;accent-color:#4ade80;" />' +
+          '<span>🔐 Uses Login</span>' +
+        '</label>' +
         '<input id="__us_name_input" type="text" placeholder="Feed name (optional)" style="display:none;background:#111;color:#fff;border:1px solid #444;padding:8px 12px;border-radius:6px;font-size:13px;width:200px;" />' +
         '<button id="__us_btn_confirm" style="display:none;background:#4ade80;color:#111;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;">Create Feed</button>' +
         '<button id="__us_btn_reset" style="display:none;background:#f59e0b;color:#111;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;">↺ Reset</button>' +
@@ -876,6 +1209,7 @@ async function injectSelector(win) {
         document.getElementById('__us_count').style.display = '';
         document.getElementById('__us_num').textContent = selectedEls.length;
         document.getElementById('__us_btn_expand').style.display = '';
+        document.getElementById('__us_login_label').style.display = 'inline-flex';
         document.getElementById('__us_btn_confirm').style.display = '';
         document.getElementById('__us_btn_reset').style.display = '';
         document.getElementById('__us_name_input').style.display = '';
@@ -946,6 +1280,8 @@ async function injectSelector(win) {
         });
 
         var feedName = document.getElementById('__us_name_input').value.trim() || '';
+        var usesLoginEl = document.getElementById('__us_uses_login');
+        var usesLogin = usesLoginEl ? Boolean(usesLoginEl.checked) : false;
 
         // Clean up
         document.removeEventListener('mousemove', onMouseMove, true);
@@ -957,6 +1293,7 @@ async function injectSelector(win) {
           selector: selectedSelector,
           items: items,
           feedName: feedName,
+          usesLogin: usesLogin,
         });
       };
 
@@ -972,6 +1309,7 @@ async function injectSelector(win) {
         document.getElementById('__us_instructions').style.display = '';
         document.getElementById('__us_count').style.display = 'none';
         document.getElementById('__us_btn_expand').style.display = 'none';
+        document.getElementById('__us_login_label').style.display = 'none';
         document.getElementById('__us_btn_confirm').style.display = 'none';
         document.getElementById('__us_btn_reset').style.display = 'none';
         document.getElementById('__us_name_input').style.display = 'none';
@@ -997,6 +1335,12 @@ async function injectSelector(win) {
 module.exports = {
   startCustomWizard,
   scrapeCustomSiteHeadless,
+  getSiteCookies,
+  clearSiteCookiesAndStorage,
+  getDomainPartsFromUrl,
+  detectLoginState,
+  isStrictAuthCookieName,
+  DETECT_LOGIN_STATE_JS,
   EXTRACT_ITEM_JS,
   buildProfileData,
   deriveFeedName,

@@ -40,12 +40,14 @@ contextBridge.exposeInMainWorld('api', {
 
   // Custom website
   startCustomFeed: (url) => ipcRenderer.invoke('start-custom-feed', url),
-  openCustomLogin: (url) => ipcRenderer.invoke('open-custom-login', url),
+  openCustomLogin: (url, username) => ipcRenderer.invoke('open-custom-login', url, username),
+  toggleCustomLogin: (username, usesLogin) => ipcRenderer.invoke('toggle-custom-login', username, usesLogin),
+  logoutCustomFeed: (username) => ipcRenderer.invoke('logout-custom-feed', username),
 
   // Feeds
   getFeeds: () => ipcRenderer.invoke('get-feeds'),
   addFeed: (url) => ipcRenderer.invoke('add-feed', url),
-  renameFeed: (username, platform, newAlias, filterKeywords) => ipcRenderer.invoke('rename-feed', username, platform, newAlias, filterKeywords),
+  renameFeed: (username, platform, newAlias, filterKeywords, usesLogin) => ipcRenderer.invoke('rename-feed', username, platform, newAlias, filterKeywords, usesLogin),
   toggleFeedBoost: (username, platform) => ipcRenderer.invoke('toggle-feed-boost', username, platform),
   removeFeed: (username, platform) => ipcRenderer.invoke('remove-feed', username, platform),
   refreshFeed: (username, platform) => ipcRenderer.invoke('refresh-feed', username, platform),

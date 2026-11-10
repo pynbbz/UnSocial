@@ -1982,6 +1982,140 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.35) !important;
 }
 
+.feed-custom-login-badge {
+  cursor: pointer;
+  user-select: none;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.feed-custom-login-badge:hover {
+  filter: brightness(1.15);
+}
+
+.feed-custom-login-badge.is-logged-in {
+  background: rgba(52, 211, 153, 0.14) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(52, 211, 153, 0.35) !important;
+}
+
+.feed-custom-login-badge.is-error {
+  background: rgba(248, 113, 113, 0.2) !important;
+  color: #fca5a5 !important;
+  border: 1px solid rgba(248, 113, 113, 0.5) !important;
+}
+
+.feed-custom-login-badge.is-unverified {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(251, 191, 36, 0.4) !important;
+}
+
+.feed-custom-login-badge.is-public {
+  background: rgba(148, 163, 184, 0.12) !important;
+  color: #94a3b8 !important;
+  border: 1px solid rgba(148, 163, 184, 0.28) !important;
+}
+
+.feed-actions .btn-relogin.is-logged-in {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.feed-actions .btn-relogin.is-logged-in:hover {
+  background: rgba(52, 211, 153, 0.18);
+  border-color: #34d399;
+}
+
+.feed-actions .btn-relogin.needs-relogin {
+  border-color: rgba(248, 113, 113, 0.65);
+  color: #fca5a5;
+  background: rgba(248, 113, 113, 0.18);
+  animation: pulseRelogin 2s infinite;
+}
+
+.feed-actions .btn-relogin.needs-relogin:hover {
+  background: rgba(248, 113, 113, 0.28);
+  border-color: #f87171;
+}
+
+@keyframes pulseRelogin {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(248, 113, 113, 0); }
+}
+
+.feed-custom-error-banner {
+  margin-top: 6px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.14);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feed-custom-error-text {
+  font-size: 11px;
+  color: #fecaca;
+  line-height: 1.3;
+  flex: 1;
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-inline-relogin {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.btn-inline-relogin:hover {
+  background: #dc2626;
+}
+
+.btn-inline-relogin:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.feed-custom-auth-row {
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  gap: 6px !important;
+}
+
+.feed-custom-auth-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.feed-custom-auth-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .feed-card-header.is-editing {
   align-items: flex-start;
 }

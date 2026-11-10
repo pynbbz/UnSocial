@@ -287,11 +287,11 @@ function startFeedServer(store, bridge = {}) {
   // ── Remote API: Rename Feed ───────────────────────────────────────────────
   app.post('/api/feed/rename', requireWebAuth, async (req, res) => {
     try {
-      const { username, platform, newAlias, filterKeywords } = req.body || {};
+      const { username, platform, newAlias, filterKeywords, usesLogin } = req.body || {};
       if (!username) throw new Error('Username required');
       if (!bridge.renameFeed) throw new Error('Feed rename not available in bridge');
 
-      const feeds = await bridge.renameFeed(username, platform, newAlias, filterKeywords);
+      const feeds = await bridge.renameFeed(username, platform, newAlias, filterKeywords, usesLogin);
       const plat = platform || 'instagram';
       const target = (feeds || []).find(
         (f) => f.username === username && (f.platform || 'instagram') === plat

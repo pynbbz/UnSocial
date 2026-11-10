@@ -469,6 +469,7 @@
         : 'Never';
       const currentKeywords = (Array.isArray(feed.filterKeywords) ? feed.filterKeywords : []).join(', ');
       const isEditing = editingFeedKey === feedKey;
+      const customNeedsRelogin = plat === 'custom' && Boolean(feed.loginError || feed.loginPaused || (feed.usesLogin && feed.loggedIn === false));
 
       if (isEditing) {
         return `
@@ -496,6 +497,14 @@
                 <input type="text" id="filter-input-${escapeHtml(feedKey)}" class="input-field feed-filter-input" value="${escapeHtml(currentKeywords)}" placeholder="e.g. sponsor, giveaway (comma-separated)" />
                 <span class="feed-edit-hint">Articles with titles containing these words or phrases will be excluded from the generated RSS.</span>
               </div>
+              ${plat === 'custom' ? `
+              <div class="feed-edit-row">
+                <label class="feed-edit-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input type="checkbox" id="uses-login-input-${escapeHtml(feedKey)}" ${feed.usesLogin ? 'checked' : ''} />
+                  <span>🔐 Uses login credentials (track login status & alert if re-login is needed)</span>
+                </label>
+              </div>
+              ` : ''}
               <div class="feed-edit-actions">
                 <button type="button" class="btn btn-primary btn-sm btn-save-rename">
                   <span class="btn-text">Save</span>
@@ -507,6 +516,16 @@
           </div>
         `;
       }
+
+      const customStatusMeta = plat === 'custom'
+        ? customNeedsRelogin
+          ? `<span class="badge-filter" title="${escapeHtml(feed.lastError || 'Re-login needed on desktop app')}">⚠️ Re-login Needed</span>`
+          : feed.usesLogin
+            ? feed.loggedIn === true
+              ? `<span class="badge badge-success" title="Using authenticated login session">🔐 Logged In</span>`
+              : `<span class="badge" title="Login credentials configured (unverified)">🔐 Login Active</span>`
+            : `<span class="badge" title="Public website scrape (no login required)">🔓 No Login</span>`
+        : '';
 
       return `
         <div class="feed-item-card" data-username="${escapeHtml(feed.username)}" data-platform="${escapeHtml(plat)}" data-feedkey="${escapeHtml(feedKey)}">
@@ -531,6 +550,7 @@
           <div class="feed-item-meta">
             <span>Checked: ${lastChecked}</span>
             <span>Type: ${escapeHtml(plat)}</span>
+            ${customStatusMeta}
             ${feed.filterKeywords && feed.filterKeywords.length > 0 ? `<span class="badge-filter" title="Excluded keywords: ${escapeHtml(currentKeywords)}">Filtered (${feed.filterKeywords.length})</span>` : ''}
           </div>
 
@@ -612,6 +632,7 @@
       const platform = editingCard.dataset.platform;
       const renameInput = document.getElementById(`rename-input-${feedKey}`);
       const filterInput = document.getElementById(`filter-input-${feedKey}`);
+      const usesLoginInput = document.getElementById(`uses-login-input-${feedKey}`);
       const btnSave = editingCard.querySelector('.btn-save-rename');
       const btnCancel = editingCard.querySelector('.btn-cancel-rename');
 
@@ -622,6 +643,7 @@
         const filterKeywords = filterVal
           ? filterVal.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
           : [];
+        const usesLogin = usesLoginInput ? usesLoginInput.checked : undefined;
 
         if (btnSave) {
           btnSave.disabled = true;
@@ -639,6 +661,7 @@
               platform,
               newAlias,
               filterKeywords,
+              usesLogin,
             }),
           });
 
