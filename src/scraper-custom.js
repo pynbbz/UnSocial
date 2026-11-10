@@ -21,11 +21,33 @@ const AUTH_COOKIE_REGEX = /(session|sess|token|auth|jwt|sid|uid|userid|user_id|l
 // Stricter pattern used for auto-detection: requires the auth keyword to be a
 // separate name segment, and excludes well-known tracking / anti-fraud cookies
 // (which are present for anonymous visitors too).
-const STRICT_AUTH_COOKIE_REGEX = /(^|[_.-])(sid|sessionid|session|sess|auth|token|jwt|logged_?in|remember(_?me)?|user_?id|xf_user|wordpress_logged_in_[a-f0-9]+)([_.-]|$)/i;
+// Includes '_t' which is Discourse's standard user authentication cookie token.
+const STRICT_AUTH_COOKIE_REGEX = /(^|[_.-])(sid|sessionid|session|sess|auth|token|jwt|logged_?in|remember(_?me)?|user_?id|xf_user|wordpress_logged_in_[a-f0-9]+)([_.-]|$)|^(_?t)$/i;
 const TRACKING_COOKIE_REGEX = /(stripe|sift|_rdt|ttcs|csrf|xsrf|__cf|gamera|fsuid|_ga|_fb|hubspot|intercom|amplitude|optimizely|segment|datadog|_dd_|newrelic|nr_|hotjar|_hj)/i;
 
 function isStrictAuthCookieName(name) {
   return Boolean(name) && STRICT_AUTH_COOKIE_REGEX.test(name) && !TRACKING_COOKIE_REGEX.test(name);
+}
+
+/**
+ * Check whether a set of cookies / domain belongs to a phpBB forum (such as Mobilism).
+ * phpBB forums use paired cookies with identical prefixes ending in _u, _sid, and _k
+ * (e.g. mob_u & mob_sid, or phpbb3_xxx_u & phpbb3_xxx_sid).
+ */
+function isPhpBBSite(cookies, domain = '') {
+  const domLower = String(domain || '').toLowerCase();
+  if (domLower.includes('mobilism.org') || domLower.includes('phpbb')) return true;
+  if (!Array.isArray(cookies) || cookies.length === 0) return false;
+  if (cookies.some(c => /phpbb/i.test(c.name))) return true;
+
+  const uCookies = cookies.filter(c => /(^|_)u$/i.test(c.name));
+  for (const uc of uCookies) {
+    const prefix = uc.name.replace(/u$/i, '');
+    if (prefix && cookies.some(c => c.name.toLowerCase() === `${prefix.toLowerCase()}sid`)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -78,7 +100,30 @@ const DETECT_LOGIN_STATE_JS = `
       var REQUIRED_MSG = /(you must be (registered and )?logged in|must be logged in|please (log|sign) in to|not (permitted|authori[sz]ed) to (use|view|access)|login required|sign in to continue|you need to (log|sign) in|session (has )?expired)/i;
       var LOCKOUT_MSG = /(too many (failed )?(login )?attempts|maximum (allowed )?number of login attempts|exceeded the maximum.*login|temporarily (locked|blocked)|try again later)/i;
 
-      var hasLogout = false, hasLoginLink = false, detectedLoginUrl = '';
+      var hasLogout = false, hasLoginLink = false, detectedLoginUrl = '', hasUserIndicator = false;
+
+      // 1. Check for modern user account/avatar indicators (Discourse, forums, SPA headers)
+      try {
+        var discourseUser = (window.Discourse && window.Discourse.User && typeof window.Discourse.User.current === 'function' && window.Discourse.User.current()) ||
+                            (window.Discourse && window.Discourse.currentUser) ||
+                            document.querySelector('meta[name="discourse-current-user"]');
+        if (discourseUser) {
+          hasUserIndicator = true;
+        }
+      } catch (_) {}
+
+      try {
+        var userEl = document.querySelector(
+          '#current-user, .current-user, [data-user-id], [data-testid*="user-avatar" i], ' +
+          '[data-testid*="profile-button" i], [aria-label*="account menu" i], [aria-label*="profile" i], ' +
+          '.user-avatar, #user-menu, [aria-label*="user menu" i], .avatar-user, #wpadminbar, ' +
+          'button#toggle-current-user, a.user-profile-link, .header-dropdown-toggle.current-user'
+        );
+        if (userEl && (!userEl.closest || !userEl.closest('#__unsocial_relogin_bar, #__unsocial_toolbar'))) {
+          hasUserIndicator = true;
+        }
+      } catch (_) {}
+
       var links = document.querySelectorAll('a[href], button, [role="button"], input[type="submit"]');
       for (var i = 0; i < links.length && i < 3000; i++) {
         var el = links[i];
@@ -87,7 +132,7 @@ const DETECT_LOGIN_STATE_JS = `
         var text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
         if (LOGOUT_HREF.test(href) || LOGOUT_TEXT.test(text)) {
           hasLogout = true;
-        } else if (LOGIN_HREF.test(href) || LOGIN_TEXT.test(text)) {
+        } else if (LOGIN_TEXT.test(text) || (LOGIN_HREF.test(href) && !href.startsWith('#') && !href.startsWith('javascript:'))) {
           hasLoginLink = true;
           if (!detectedLoginUrl && href && !href.startsWith('#') && !href.startsWith('javascript:')) {
             try {
@@ -114,15 +159,18 @@ const DETECT_LOGIN_STATE_JS = `
       var isLoginPage = /(\\/login|\\/signin|\\/sign-in|\\/log-in|mode=login|wp-login\\.php)/i.test(location.href);
 
       var state = 'unknown';
-      if (hasLogout) {
+      if (hasLogout || hasUserIndicator) {
         state = 'logged-in';
-      } else if (isLoginPage || hasPassword || loginRequiredMsg || hasLoginLink || lockedOut) {
+      } else if (isLoginPage || hasPassword || loginRequiredMsg || lockedOut) {
+        state = 'logged-out';
+      } else if (hasLoginLink && !hasUserIndicator) {
         state = 'logged-out';
       }
 
       return {
         state: state,
         hasLogout: hasLogout,
+        hasUserIndicator: hasUserIndicator,
         hasLoginLink: hasLoginLink,
         hasPassword: hasPassword,
         loginRequiredMsg: loginRequiredMsg,
@@ -181,13 +229,13 @@ async function getSiteCookies(rawUrl) {
       return cookieMatchesDomain(c.domain, hostname, baseDomain);
     });
 
-    const isGuest = isGuestSession(matching);
-    const isPhpBBLoggedIn = hasPhpBBUid(matching);
+    const isPhpBB = isPhpBBSite(matching, hostname);
+    const isGuest = isPhpBB && isGuestSession(matching);
+    const isPhpBBLoggedIn = isPhpBB && hasPhpBBUid(matching);
     const nonNoise = matching.filter((c) => !NOISE_COOKIE_REGEX.test(c.name));
     let authLike = nonNoise.filter((c) => isStrictAuthCookieName(c.name));
 
-    const hasPhpBBCookies = matching.some((c) => /(^|_)sid$/i.test(c.name) || /(^|_)u$/i.test(c.name));
-    if (isGuest || (hasPhpBBCookies && !isPhpBBLoggedIn)) {
+    if (isPhpBB && (isGuest || !isPhpBBLoggedIn)) {
       // Exclude guest/anonymous phpBB session cookies from authLike so guest visitors aren't treated as logged-in
       authLike = authLike.filter((c) => !/(^|_)sid$/i.test(c.name) && !/(^|_)u$/i.test(c.name) && !/(^|_)k$/i.test(c.name));
     }
@@ -512,11 +560,12 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
       const loginUrlPattern = /\/(login|signin|sign-in|log-in|auth|authenticate|sso|checkpoint|session\/new)\b|mode=login/i;
       const redirectedToLogin = !loginUrlPattern.test(pageUrl || '') && loginUrlPattern.test(currentUrl);
 
+      const hasPasswordInput = Boolean(extractionResult && extractionResult.hasPasswordInput);
       const isLoggedOut = Boolean(
         redirectedToLogin ||
-        loginInfo.state === 'logged-out' ||
         loginInfo.lockedOut ||
-        siteCookies.isGuest
+        siteCookies.isGuest ||
+        (items.length === 0 && (loginInfo.state === 'logged-out' || hasPasswordInput))
       );
 
       // For feeds that depend on a login, verify the page actually shows a
@@ -1340,6 +1389,7 @@ module.exports = {
   getDomainPartsFromUrl,
   detectLoginState,
   isStrictAuthCookieName,
+  isPhpBBSite,
   DETECT_LOGIN_STATE_JS,
   EXTRACT_ITEM_JS,
   buildProfileData,

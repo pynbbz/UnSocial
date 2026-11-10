@@ -561,6 +561,11 @@
             <button type="button" class="btn btn-outline btn-sm btn-rename-feed" data-feedkey="${escapeHtml(feedKey)}" title="Rename feed and auto-update URL">
               ✏️ Rename
             </button>
+            ${(plat === 'custom' && customNeedsRelogin) ? `
+            <button type="button" class="btn btn-outline btn-sm btn-confirm-custom-login" data-username="${escapeHtml(feed.username)}" title="Manually confirm login and refresh feed">
+              ✓ Confirm Logged In
+            </button>
+            ` : ''}
             <button type="button" class="btn btn-outline btn-sm btn-refresh-feed" data-username="${escapeHtml(feed.username)}" data-platform="${escapeHtml(plat)}">
               ↻ Refresh
             </button>
@@ -606,6 +611,31 @@
         } finally {
           btn.disabled = false;
           btn.classList.remove('rotating');
+        }
+      });
+    });
+
+    // 2b. Confirm Custom Feed Login actions
+    feedsListContainer.querySelectorAll('.btn-confirm-custom-login').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const username = btn.dataset.username;
+        btn.disabled = true;
+        btn.textContent = 'Verifying…';
+        try {
+          const res = await api('/api/feed/confirm-login', {
+            method: 'POST',
+            body: JSON.stringify({ username }),
+          });
+          if (res?.refreshError) {
+            showToast(`Marked logged in, but refresh failed: ${res.refreshError}`, 'error');
+          } else {
+            showToast(`Confirmed login for @${username}!`, 'success');
+          }
+          await loadFeeds();
+        } catch (err) {
+          showToast(`Confirm failed: ${err.message}`, 'error');
+          btn.disabled = false;
+          btn.textContent = '✓ Confirm Logged In';
         }
       });
     });

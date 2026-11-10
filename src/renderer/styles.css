@@ -2069,6 +2069,13 @@ body {
   white-space: nowrap;
 }
 
+.feed-custom-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .btn-inline-relogin {
   background: #ef4444;
   color: #fff;
@@ -2087,6 +2094,30 @@ body {
 }
 
 .btn-inline-relogin:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.btn-inline-confirm-login {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-inline-confirm-login:hover {
+  background: rgba(16, 185, 129, 0.35);
+  border-color: rgba(16, 185, 129, 0.7);
+  color: #6ee7b7;
+}
+
+.btn-inline-confirm-login:disabled {
   opacity: 0.6;
   cursor: wait;
 }

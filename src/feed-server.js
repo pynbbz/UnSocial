@@ -324,6 +324,20 @@ function startFeedServer(store, bridge = {}) {
     }
   });
 
+  // ── Remote API: Confirm Custom Feed Login ─────────────────────────────────
+  app.post('/api/feed/confirm-login', requireWebAuth, async (req, res) => {
+    try {
+      const { username } = req.body || {};
+      if (!username) throw new Error('Username required');
+      if (!bridge.confirmCustomLogin) throw new Error('Confirm custom login not available in bridge');
+
+      const result = await bridge.confirmCustomLogin(username);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Remote Custom Website Studio Endpoints ────────────────────────────────
   app.post('/api/custom-wizard/start', requireWebAuth, async (req, res) => {
     try {

@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('api', {
   // Custom website
   startCustomFeed: (url) => ipcRenderer.invoke('start-custom-feed', url),
   openCustomLogin: (url, username) => ipcRenderer.invoke('open-custom-login', url, username),
+  confirmCustomLogin: (username) => ipcRenderer.invoke('confirm-custom-login', username),
   toggleCustomLogin: (username, usesLogin) => ipcRenderer.invoke('toggle-custom-login', username, usesLogin),
   logoutCustomFeed: (username) => ipcRenderer.invoke('logout-custom-feed', username),
 

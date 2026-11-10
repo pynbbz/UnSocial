@@ -1330,7 +1330,10 @@ function buildFeedCard(feed) {
             <span class="feed-custom-error-text" title="${escapeHtml(feed.lastError || 'Login session expired or selector matched 0 items')}">
               ${escapeHtml(feed.lastError || 'Session expired — re-login needed to refresh feed')}
             </span>
-            <button type="button" class="btn-inline-relogin">🔑 Re-login & Refresh</button>
+            <div class="feed-custom-error-actions">
+              <button type="button" class="btn-inline-relogin">🔑 Log In</button>
+              <button type="button" class="btn-inline-confirm-login" title="Manually confirm you are logged in and refresh this feed">✓ Confirm Logged In</button>
+            </div>
           </div>
           ` : ''}
           <div class="feed-urls">
@@ -1443,7 +1446,8 @@ function buildFeedCard(feed) {
               <span>🔐 Uses login credentials (track login session & alert if re-login is needed)</span>
             </label>
             <div class="feed-custom-auth-actions">
-              <button type="button" class="btn btn-outline btn-sm btn-edit-open-login">🔑 Re-login Now</button>
+              <button type="button" class="btn btn-outline btn-sm btn-edit-open-login">🔑 Log In</button>
+              <button type="button" class="btn btn-outline btn-sm btn-edit-confirm-login">✓ Confirm Logged In</button>
               <button type="button" class="btn btn-outline btn-sm btn-edit-clear-cookies">🧹 Clear Site Cookies</button>
             </div>
           </div>
@@ -1459,6 +1463,7 @@ function buildFeedCard(feed) {
       const filterInput = feedInfo.querySelector('.feed-filter-input');
       const usesLoginCheckbox = feedInfo.querySelector('.feed-custom-uses-login-checkbox');
       const openLoginEditBtn = feedInfo.querySelector('.btn-edit-open-login');
+      const confirmLoginEditBtn = feedInfo.querySelector('.btn-edit-confirm-login');
       const clearCookiesEditBtn = feedInfo.querySelector('.btn-edit-clear-cookies');
       const saveBtn = feedInfo.querySelector('.btn-save-edit');
       const cancelBtn = feedInfo.querySelector('.btn-cancel-edit');
@@ -1477,6 +1482,25 @@ function buildFeedCard(feed) {
             }
           } catch (err) {
             toast('Login failed: ' + (err.message || err), 'error');
+          } finally {
+            await renderFeeds();
+          }
+        });
+      }
+
+      if (confirmLoginEditBtn) {
+        confirmLoginEditBtn.addEventListener('click', async () => {
+          confirmLoginEditBtn.disabled = true;
+          confirmLoginEditBtn.textContent = 'Confirming…';
+          try {
+            const res = await window.api.confirmCustomLogin(feed.username);
+            if (res?.refreshError) {
+              toast(`Confirmed login, but refresh failed: ${res.refreshError}`, 'error');
+            } else {
+              toast(`Confirmed login & refreshed @${feed.username}!`, 'success');
+            }
+          } catch (err) {
+            toast('Failed to confirm login: ' + (err.message || err), 'error');
           } finally {
             await renderFeeds();
           }
@@ -1575,13 +1599,41 @@ function buildFeedCard(feed) {
       const reloginBtn = card.querySelector('.btn-relogin');
       const loginBadge = card.querySelector('.feed-custom-login-badge');
       const inlineReloginBtn = card.querySelector('.btn-inline-relogin');
+      const inlineConfirmBtn = card.querySelector('.btn-inline-confirm-login');
+
+      const handleConfirmLogin = async () => {
+        if (inlineConfirmBtn) {
+          inlineConfirmBtn.disabled = true;
+          inlineConfirmBtn.textContent = 'Verifying & refreshing…';
+        }
+        if (reloginBtn) setBtnLoading(reloginBtn, true);
+        toast(`Confirming login & refreshing @${feed.username}…`, 'info');
+        try {
+          const res = await window.api.confirmCustomLogin(feed.username);
+          if (res?.refreshError) {
+            toast(`Confirmed login, but refresh failed: ${res.refreshError}`, 'error');
+          } else {
+            toast(`Confirmed login & refreshed @${feed.username}!`, 'success');
+          }
+        } catch (err) {
+          toast(`Failed to confirm login: ${err.message || err}`, 'error');
+        } finally {
+          if (inlineConfirmBtn) {
+            inlineConfirmBtn.disabled = false;
+            inlineConfirmBtn.textContent = '✓ Confirm Logged In';
+          }
+          if (reloginBtn) setBtnLoading(reloginBtn, false);
+          await renderFeeds();
+          window.focus();
+        }
+      };
 
       const handleCustomRelogin = async () => {
         const url = feed.fullUrl || feed.url;
         if (reloginBtn) setBtnLoading(reloginBtn, true);
         if (inlineReloginBtn) {
           inlineReloginBtn.disabled = true;
-          inlineReloginBtn.textContent = 'Logging in & refreshing…';
+          inlineReloginBtn.textContent = 'Opening login window…';
         }
         toast('Opening custom site login window…', 'info');
         try {
@@ -1593,12 +1645,16 @@ function buildFeedCard(feed) {
           } else if (result?.loggedIn) {
             toast(`Login session verified for @${feed.username}`, 'success');
           } else {
-            toast('Login window closed (session remained logged out)', 'info');
+            toast('Login window closed', 'info');
           }
         } catch (err) {
-          toast(`Failed to re-login @${feed.username}: ${err.message || err}`, 'error');
+          toast(`Failed to log in @${feed.username}: ${err.message || err}`, 'error');
         } finally {
           if (reloginBtn) setBtnLoading(reloginBtn, false);
+          if (inlineReloginBtn) {
+            inlineReloginBtn.disabled = false;
+            inlineReloginBtn.textContent = '🔑 Log In';
+          }
           await renderFeeds();
           window.focus();
         }
@@ -1606,23 +1662,45 @@ function buildFeedCard(feed) {
 
       const handleCustomLoginContextMenu = async (e) => {
         e.preventDefault();
+        const feedLabel = feed.alias || feed.username;
+
+        const confirmDirect = confirm(
+          `Custom Website Login for "${feedLabel}":\n\n` +
+          `• Click OK to manually confirm this feed is LOGGED IN and refresh now.\n` +
+          `• Click Cancel for other options (open website, clear cookies, toggle).`
+        );
+        if (confirmDirect) {
+          await handleConfirmLogin();
+          return;
+        }
+
+        const openLogin = confirm(
+          `Open site login window for "${feedLabel}"?\n\n` +
+          `• Click OK to open website base domain to sign in.\n` +
+          `• Click Cancel for cookie and public/private options.`
+        );
+        if (openLogin) {
+          handleCustomRelogin();
+          return;
+        }
+
         if (feed.usesLogin) {
           const action = confirm(
-            `Custom Login Options for "${feed.alias || feed.username}":\n\n` +
-            `• Click OK to clear site cookies & log out of this website.\n` +
-            `• Click Cancel to toggle whether this feed requires login credentials.`
+            `Session options for "${feedLabel}":\n\n` +
+            `• Click OK to clear site cookies & log out.\n` +
+            `• Click Cancel to mark as a public feed (🔓 No Login required).`
           );
           if (action) {
             await window.api.logoutCustomFeed(feed.username);
             toast(`Cleared site cookies for @${feed.username}`, 'info');
             await renderFeeds();
-          } else if (confirm(`Mark "${feed.alias || feed.username}" as a public feed (🔓 No Login)?`)) {
+          } else {
             await window.api.toggleCustomLogin(feed.username, false);
             toast(`Marked @${feed.username} as public (no login)`, 'info');
             await renderFeeds();
           }
         } else {
-          if (confirm(`Mark "${feed.alias || feed.username}" as using login credentials (🔐 Uses Login)?`)) {
+          if (confirm(`Mark "${feedLabel}" as requiring login credentials (🔐 Uses Login)?`)) {
             await window.api.toggleCustomLogin(feed.username, true);
             toast(`Marked @${feed.username} as using login credentials`, 'success');
             await renderFeeds();
@@ -1640,6 +1718,9 @@ function buildFeedCard(feed) {
       }
       if (inlineReloginBtn) {
         inlineReloginBtn.addEventListener('click', handleCustomRelogin);
+      }
+      if (inlineConfirmBtn) {
+        inlineConfirmBtn.addEventListener('click', handleConfirmLogin);
       }
     }
 

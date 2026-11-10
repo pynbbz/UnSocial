@@ -97,7 +97,7 @@ const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { scrapeTelegramChannel, parseTelegramInput, listTelegramChannels } = require('./scraper-telegram');
-const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
+const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, isPhpBBSite, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
 const { getRealisticUserAgent } = require('./user-agent');
@@ -516,6 +516,7 @@ app.whenReady().then(async () => {
     checkPlatforms: () => checkAllPlatforms(),
     renameFeed: (username, platform, newAlias, filterKeywords, usesLogin) => renameFeedCore(username, platform, newAlias, filterKeywords, usesLogin),
     listTelegramChannels: () => listTelegramChannels(),
+    confirmCustomLogin: (username) => confirmCustomLoginCore(username),
   });
   startInternetMonitor();
   startStaleFeedMonitor();
@@ -1466,11 +1467,8 @@ function recordCustomFeedSuccess(username, loginState) {
       if (loginState === 'logged-in') {
         next.loggedIn = true;
         next.loginVerifiedAt = new Date().toISOString();
-      } else if (loginState === 'logged-out') {
-        next.loggedIn = false;
-        next.loginError = true;
-        next.loginPaused = true;
       }
+      // If scrape succeeded, retain current loggedIn state and do not pause feed
     }
     return next;
   });
@@ -1548,8 +1546,8 @@ async function checkCustomFeedsLoginStatus() {
       }
 
       // If site is a forum like phpBB (such as Mobilism), verify registered user ID
-      const isPhpBBSite = domain.includes('mobilism.org') || status.all.some(c => /(^|_)u$/i.test(c.name) || /(^|_)sid$/i.test(c.name));
-      if (isPhpBBSite) {
+      const isPhpBB = isPhpBBSite(status.all, domain);
+      if (isPhpBB) {
         if (status.isPhpBBLoggedIn && !f.loginLockedOut) {
           if (f.loggedIn !== true || f.loginError) {
             f.loggedIn = true;
@@ -2428,20 +2426,15 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
     const domainParts = getDomainPartsFromUrl(targetUrl);
     const targetDomain = domainParts.baseDomain;
 
-    let directLoginUrl = null;
+    // Open base domain homepage so user can log in naturally without broken /login URLs
+    let baseWebsiteUrl = targetUrl;
     try {
       const u = new URL(targetUrl.startsWith('http') ? targetUrl : 'https://' + targetUrl);
-      if (domainParts.hostname.includes('mobilism.org') || u.pathname.includes('phpbb') || u.pathname.endsWith('.php')) {
-        directLoginUrl = `${u.origin}/ucp.php?mode=login`;
-      } else {
-        directLoginUrl = `${u.origin}/login`;
-      }
-    } catch (_) {}
-
-    // If feed currently has a login error or targetUrl is search.php,
-    // open directly on the login URL so the user has the full login page with CAPTCHA
-    const shouldStartOnLogin = (targetFeed?.loginError || targetFeed?.loginPaused || (targetUrl && targetUrl.includes('search.php'))) && directLoginUrl;
-    const initialUrl = shouldStartOnLogin ? directLoginUrl : targetUrl;
+      baseWebsiteUrl = u.origin;
+    } catch (_) {
+      baseWebsiteUrl = domainParts.origin || targetUrl;
+    }
+    const initialUrl = baseWebsiteUrl || targetUrl;
 
     let loginWin = new BrowserWindow({
       width: 1100,
@@ -2490,14 +2483,12 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
       if (isActuallyLoggedIn) {
         statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(52,211,153,0.18);color:#34d399;border:1px solid rgba(52,211,153,0.45);padding:3px 9px;border-radius:5px;font-weight:700;font-size:11px;white-space:nowrap;flex-shrink:0;">✅ LOGGED IN</span>';
       } else if (isLockedOut) {
-        statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.55);padding:3px 9px;border-radius:5px;font-weight:700;font-size:11px;white-space:nowrap;flex-shrink:0;" title="Website reports too many login attempts. Enter username, password AND solve the CAPTCHA image below to unlock.">⚠️ LOCKED OUT — SOLVE CAPTCHA BELOW</span>';
+        statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.55);padding:3px 9px;border-radius:5px;font-weight:700;font-size:11px;white-space:nowrap;flex-shrink:0;" title="Website reports too many login attempts. Enter username, password AND solve the CAPTCHA image below to unlock.">⚠️ LOCKED OUT — SOLVE CAPTCHA</span>';
       } else if (isGuest) {
         statusHtml = '<span id="__unsocial_relogin_status" style="background:rgba(251,191,36,0.18);color:#fbbf24;border:1px solid rgba(251,191,36,0.45);padding:3px 9px;border-radius:5px;font-weight:600;font-size:11px;white-space:nowrap;flex-shrink:0;">🔓 NOT LOGGED IN</span>';
       } else {
-        statusHtml = `<span id="__unsocial_relogin_status" style="color:#a8b2d1;font-size:11px;white-space:nowrap;flex-shrink:0;">${cookies.nonNoise.length} cookies</span>`;
+        statusHtml = `<span id="__unsocial_relogin_status" style="background:rgba(148,163,184,0.15);color:#cbd5e1;border:1px solid rgba(148,163,184,0.3);padding:3px 9px;border-radius:5px;font-size:11px;white-space:nowrap;flex-shrink:0;">🍪 ${cookies.nonNoise.length} cookie${cookies.nonNoise.length === 1 ? '' : 's'}</span>`;
       }
-
-      const activeLoginTarget = loginInfo.detectedLoginUrl || directLoginUrl;
 
       const js = `(function() {
         var existing = document.getElementById('__unsocial_relogin_bar');
@@ -2509,20 +2500,20 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
           <span style="background:#7c5cfc;color:#fff;font-weight:700;font-size:11px;padding:3px 7px;border-radius:5px;letter-spacing:0.3px;flex-shrink:0;">CUSTOM LOGIN</span>
           <button id="__unsocial_relogin_back" title="Back" style="background:rgba(255,255,255,0.08);color:#ccc;border:1px solid rgba(255,255,255,0.15);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:12px;">←</button>
           <button id="__unsocial_relogin_reload" title="Reload" style="background:rgba(255,255,255,0.08);color:#ccc;border:1px solid rgba(255,255,255,0.15);padding:4px 8px;border-radius:5px;cursor:pointer;font-size:12px;">↻</button>
-          \${${JSON.stringify(Boolean(activeLoginTarget))} ? \`<button id="__unsocial_relogin_goto_login" title="Navigate to website login page (with CAPTCHA)" style="background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.45);padding:4px 9px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11px;white-space:nowrap;flex-shrink:0;">🔑 Login Page</button>\` : ''}
-          \${${JSON.stringify(Boolean(targetUrl && targetUrl !== activeLoginTarget))} ? \`<button id="__unsocial_relogin_goto_feed" title="Navigate to feed content page" style="background:rgba(255,255,255,0.08);color:#e2e8f0;border:1px solid rgba(255,255,255,0.18);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0;">📄 Feed Page</button>\` : ''}
+          <button id="__unsocial_relogin_goto_base" title="Navigate to website base domain homepage" style="background:rgba(99,102,241,0.2);color:#a5b4fc;border:1px solid rgba(99,102,241,0.45);padding:4px 9px;border-radius:5px;cursor:pointer;font-weight:600;font-size:11px;white-space:nowrap;flex-shrink:0;">🏠 Base Site</button>
+          \${${JSON.stringify(Boolean(targetUrl && targetUrl !== baseWebsiteUrl))} ? \`<button id="__unsocial_relogin_goto_feed" title="Navigate to feed content page" style="background:rgba(255,255,255,0.08);color:#e2e8f0;border:1px solid rgba(255,255,255,0.18);padding:4px 9px;border-radius:5px;cursor:pointer;font-size:11px;white-space:nowrap;flex-shrink:0;">📄 Feed Page</button>\` : ''}
           <input id="__unsocial_relogin_url" type="text" value="\${location.href.replace(/"/g, '&quot;')}" style="flex:1;min-width:120px;background:rgba(0,0,0,0.35);color:#e8e8f0;border:1px solid rgba(255,255,255,0.16);border-radius:5px;padding:4px 8px;font-size:11px;outline:none;" />
           ${statusHtml}
-          <button id="__unsocial_relogin_clear" title="Clear website session cookies (preserves Cloudflare) and reload login page" style="background:rgba(248,113,113,0.15);color:#fca5a5;border:1px solid rgba(248,113,113,0.35);padding:5px 9px;border-radius:5px;font-weight:600;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;">🧹 Clear Cookies</button>
-          <button id="__unsocial_relogin_done" style="background:${isActuallyLoggedIn ? '#34d399' : '#4f46e5'};color:#fff;border:none;padding:5px 12px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;">${isActuallyLoggedIn ? '✓ Done — Save & Refresh' : '✓ Done'}</button>
+          <button id="__unsocial_relogin_clear" title="Clear website session cookies (preserves Cloudflare) and reload base site" style="background:rgba(248,113,113,0.15);color:#fca5a5;border:1px solid rgba(248,113,113,0.35);padding:5px 9px;border-radius:5px;font-weight:600;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;">🧹 Clear Cookies</button>
+          <button id="__unsocial_relogin_confirm" style="background:#10b981;color:#fff;border:none;padding:5px 12px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;" title="Click once you have logged in to save cookies, mark feed as logged in, and refresh">✓ Confirm Logged In & Refresh</button>
+          <button id="__unsocial_relogin_close" style="background:rgba(255,255,255,0.08);color:#bbb;border:1px solid rgba(255,255,255,0.18);padding:5px 10px;border-radius:5px;font-size:11px;cursor:pointer;white-space:nowrap;flex-shrink:0;" title="Close window without changing login status">✕ Close</button>
         \`;
         document.documentElement.appendChild(bar);
         document.body.style.setProperty('margin-top', '44px', 'important');
 
         document.getElementById('__unsocial_relogin_back').addEventListener('click', () => history.back());
         document.getElementById('__unsocial_relogin_reload').addEventListener('click', () => location.reload());
-        var btnLogin = document.getElementById('__unsocial_relogin_goto_login');
-        if (btnLogin) btnLogin.addEventListener('click', () => { location.href = ${JSON.stringify(activeLoginTarget || '')}; });
+        document.getElementById('__unsocial_relogin_goto_base').addEventListener('click', () => { location.href = ${JSON.stringify(baseWebsiteUrl || '')}; });
         var btnFeed = document.getElementById('__unsocial_relogin_goto_feed');
         if (btnFeed) btnFeed.addEventListener('click', () => { location.href = ${JSON.stringify(targetUrl || '')}; });
         var urlInput = document.getElementById('__unsocial_relogin_url');
@@ -2539,11 +2530,14 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
           btn.disabled = true;
           window.unsocial.send('custom-relogin-clear');
         });
-        document.getElementById('__unsocial_relogin_done').addEventListener('click', () => {
-          var btn = document.getElementById('__unsocial_relogin_done');
-          btn.textContent = 'Checking...';
+        document.getElementById('__unsocial_relogin_confirm').addEventListener('click', () => {
+          var btn = document.getElementById('__unsocial_relogin_confirm');
+          btn.textContent = 'Saving…';
           btn.disabled = true;
-          window.unsocial.send('custom-relogin-done');
+          window.unsocial.send('custom-relogin-confirm');
+        });
+        document.getElementById('__unsocial_relogin_close').addEventListener('click', () => {
+          window.unsocial.send('custom-relogin-close');
         });
       })();`;
 
@@ -2602,31 +2596,23 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
         if (targetUrl && targetUrl !== currentUrl) {
           await clearSiteCookiesAndStorage(targetUrl, true);
         }
-        if (directLoginUrl) {
-          loginWin.loadURL(directLoginUrl);
-        } else {
-          loginWin.webContents.reload();
-        }
-      } else if (channel === 'custom-relogin-done') {
-        const cookies = await getSiteCookies(loginWin.webContents.getURL() || targetUrl);
-        const pageLogin = await detectLoginState(loginWin.webContents);
-        const isActuallyLoggedIn = pageLogin.state === 'logged-in' || cookies.isPhpBBLoggedIn;
-
-        if (!isActuallyLoggedIn) {
-          const promptJs = `confirm("UnSocial detected that you may still be logged out of this website.\\n\\nIf you haven't finished signing in (or haven't solved the CAPTCHA), the feed will not be able to fetch private content.\\n\\nClick OK to close anyway, or Cancel to stay on the page and finish logging in.");`;
-          const proceed = await loginWin.webContents.executeJavaScript(promptJs).catch(() => true);
-          if (!proceed) {
-            injectLoginHelperBar();
-            return;
-          }
-        }
-
+        loginWin.loadURL(baseWebsiteUrl || initialUrl);
+      } else if (channel === 'custom-relogin-confirm') {
         const winToClose = loginWin;
         loginWin = null;
         if (winToClose && !winToClose.isDestroyed()) {
           winToClose.close();
         }
-        await finalizeLogin(isActuallyLoggedIn, isActuallyLoggedIn);
+        await finalizeLogin(true, true);
+      } else if (channel === 'custom-relogin-close') {
+        const winToClose = loginWin;
+        loginWin = null;
+        if (winToClose && !winToClose.isDestroyed()) {
+          winToClose.close();
+        }
+        const cookies = await getSiteCookies(targetUrl);
+        const isLogged = (cookies.authLike.length > 0 && !cookies.isGuest) || Boolean(targetFeed?.loggedIn);
+        await finalizeLogin(isLogged, isLogged);
       }
     };
 
@@ -2639,14 +2625,50 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
     loginWin.on('closed', async () => {
       loginWin = null;
       isCustomLoginWindowOpen = false;
+      if (finalized) return;
       const cookies = await getSiteCookies(targetUrl);
-      const isPhpBBSite = (targetDomain && targetDomain.includes('mobilism.org')) || cookies.all.some(c => /(^|_)u$/i.test(c.name) || /(^|_)sid$/i.test(c.name));
-      const isLogged = isPhpBBSite
+      const isPhpBB = isPhpBBSite(cookies.all, targetDomain);
+      const isLogged = isPhpBB
         ? Boolean(cookies.isPhpBBLoggedIn)
-        : (cookies.authLike.length > 0 && !cookies.isGuest);
+        : ((cookies.authLike.length > 0 || (cookies.nonNoise.length > 0 && targetFeed?.loggedIn)) && !cookies.isGuest);
       finalizeLogin(isLogged, isLogged);
     });
   });
+});
+
+async function confirmCustomLoginCore(username) {
+  const feeds = store.get('feeds');
+  const targetFeed = feeds.find(f => f.username === username && (f.platform || 'instagram') === 'custom');
+  if (!targetFeed) throw new Error('Custom feed not found');
+
+  const targetUrl = targetFeed.fullUrl || targetFeed.url;
+  const targetDomain = getFeedBaseDomain(targetFeed);
+  const { nonNoise, authLike } = await getSiteCookies(targetUrl);
+  const authCookieNames = (authLike.length > 0 ? authLike : nonNoise).map(c => c.name);
+
+  markCustomDomainLoggedIn(targetDomain, username, authCookieNames);
+
+  let refreshed = false;
+  let refreshError = null;
+  try {
+    await refreshFeedCore(username, 'custom');
+    refreshed = true;
+  } catch (err) {
+    refreshError = err.message;
+  }
+
+  return {
+    success: true,
+    usesLogin: true,
+    loggedIn: true,
+    refreshed,
+    refreshError,
+    cookieCount: nonNoise.length,
+  };
+}
+
+ipcMain.handle('confirm-custom-login', async (_e, username) => {
+  return confirmCustomLoginCore(username);
 });
 
 ipcMain.handle('toggle-custom-login', async (_e, username, usesLogin) => {
