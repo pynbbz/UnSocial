@@ -193,6 +193,67 @@ async function detectLoginState(webContents) {
   }
 }
 
+/**
+ * Detects whether the current page in webContents is a Cloudflare verification challenge
+ * (Cloudflare Turnstile, managed challenge, or bot detection page).
+ * This check is strictly read-only and non-mutating to prevent triggering Cloudflare's
+ * MutationObserver anti-tamper heuristics which loop the challenge.
+ */
+async function isCloudflareChallenge(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    const url = (webContents.getURL() || '').toLowerCase();
+    if (
+      url.includes('challenges.cloudflare.com') ||
+      url.includes('/cdn-cgi/challenge-platform/') ||
+      url.includes('__cf_chl')
+    ) {
+      return true;
+    }
+
+    const title = (webContents.getTitle() || '').toLowerCase();
+    if (
+      title.includes('just a moment') ||
+      title.includes('attention required! | cloudflare') ||
+      (title.includes('cloudflare') && (title.includes('verify') || title.includes('checking') || title.includes('security')))
+    ) {
+      return true;
+    }
+
+    // Passive, non-mutating DOM check
+    const isCf = await webContents.executeJavaScript(`(function() {
+      try {
+        if (document.getElementById('challenge-running') ||
+            document.getElementById('challenge-form') ||
+            document.getElementById('challenge-stage') ||
+            document.getElementById('cf-wrapper') ||
+            document.querySelector('.cf-turnstile') ||
+            document.querySelector('[name="cf-turnstile-response"]') ||
+            document.querySelector('input[name*="cf_chl"]') ||
+            document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+            document.querySelector('iframe[src*="turnstile"]')) {
+          return true;
+        }
+        var t = (document.title || '').toLowerCase();
+        if (t.indexOf('just a moment') !== -1) return true;
+        var b = (document.body && document.body.innerText) ? document.body.innerText.slice(0, 600).toLowerCase() : '';
+        if (b.indexOf('verify you are human') !== -1 ||
+            b.indexOf('checking if the site connection is secure') !== -1 ||
+            b.indexOf('checking your browser before accessing') !== -1) {
+          return true;
+        }
+        return false;
+      } catch (_) {
+        return false;
+      }
+    })()`).catch(() => false);
+
+    return Boolean(isCf);
+  } catch (_) {
+    return false;
+  }
+}
+
 function getDomainPartsFromUrl(rawUrl) {
   try {
     const u = new URL(rawUrl.startsWith('http') ? rawUrl : 'https://' + rawUrl);
@@ -350,6 +411,15 @@ function startCustomWizard(siteUrl, parentWindow) {
       }
       injectToolbar(wizardWin, step, targetUrl).catch(() => { });
     });
+    wizardWin.webContents.on('did-navigate', () => {
+      injectToolbar(wizardWin, step, targetUrl).catch(() => { });
+    });
+    wizardWin.webContents.on('page-title-updated', (_event, title) => {
+      const t = (title || '').toLowerCase();
+      if (!t.includes('just a moment') && !t.includes('attention required! | cloudflare')) {
+        injectToolbar(wizardWin, step, targetUrl).catch(() => { });
+      }
+    });
 
     // ── Messages from injected JS (via preload bridge) ──────────────────
     wizardWin.webContents.on('ipc-message', async (_event, channel, subChannel, data) => {
@@ -488,6 +558,17 @@ async function scrapeCustomSiteHeadless(pageUrl, selector, feedName, scrollSelec
       await loadPage(hidden, pageUrl);
       // Wait for dynamic content to render (6s for heavy SPAs like Meetup)
       await sleep(6000);
+
+      // Detect if Cloudflare security verification is active
+      const isCf = await isCloudflareChallenge(hidden.webContents);
+      if (isCf) {
+        const err = new Error(
+          `"${feedName || pageUrl}" — Cloudflare security check required. Click Re-login on the feed card to complete verification.`
+        );
+        err.isLoginError = true;
+        err.isCloudflare = true;
+        throw err;
+      }
 
       // Perform scrolling if configured
       const numScrolls = parseInt(scrollCount, 10) || 0;
@@ -815,6 +896,28 @@ const EXTRACT_ITEM_JS = `
 
 async function injectToolbar(win, step, targetUrl) {
   if (win.isDestroyed()) return;
+
+  // If page is currently showing Cloudflare Turnstile or security challenge,
+  // do NOT inject any toolbar or spacers — DOM mutations cause Turnstile to loop.
+  const isCf = await isCloudflareChallenge(win.webContents);
+  if (isCf) {
+    console.log('[Custom Wizard] Cloudflare challenge active — withholding wizard toolbar injection to prevent challenge loop.');
+    try {
+      await win.webContents.executeJavaScript(`(function() {
+        var old = document.getElementById('__unsocial_toolbar');
+        if (old) old.remove();
+        var spacer = document.getElementById('__unsocial_spacer');
+        if (spacer) spacer.remove();
+      })()`).catch(() => {});
+    } catch (_) {}
+    try {
+      win.setTitle('Cloudflare Verification — Complete check to continue');
+    } catch (_) {}
+    return;
+  }
+  try {
+    win.setTitle('UnSocial — Custom Feed Wizard');
+  } catch (_) {}
 
   const js = `
     (function() {
@@ -1390,6 +1493,7 @@ module.exports = {
   detectLoginState,
   isStrictAuthCookieName,
   isPhpBBSite,
+  isCloudflareChallenge,
   DETECT_LOGIN_STATE_JS,
   EXTRACT_ITEM_JS,
   buildProfileData,

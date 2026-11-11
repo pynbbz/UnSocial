@@ -97,11 +97,17 @@ const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { scrapeTelegramChannel, parseTelegramInput, listTelegramChannels } = require('./scraper-telegram');
-const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, isPhpBBSite, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
+const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, isPhpBBSite, isCloudflareChallenge, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
 const { generateFeed } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
 const { getRealisticUserAgent } = require('./user-agent');
 const tunnel = require('./tunnel');
+
+// Disable Blink AutomationControlled feature so Chromium does not expose automation
+// flags (navigator.webdriver) to Cloudflare Turnstile / anti-bot challenges.
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+// Set realistic desktop Chrome UA fallback for Web Workers and sub-contexts (prevents Turnstile worker UA mismatch)
+app.userAgentFallback = getRealisticUserAgent();
 
 const crypto = require('crypto');
 
@@ -491,6 +497,7 @@ app.whenReady().then(async () => {
   // Persist cookies across restarts
   const ses = session.defaultSession;
   const realisticUA = getRealisticUserAgent();
+  app.userAgentFallback = realisticUA;
   ses.setUserAgent(realisticUA);
 
   // Strip restrictive Content-Security-Policy on LinkedIn so embedded resources and subframes don't trigger ERR_BLOCKED_BY_CSP
@@ -2469,8 +2476,61 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
       },
     }));
 
+    let cfPollTimer = null;
+    const cleanupCfPollTimer = () => {
+      if (cfPollTimer) {
+        clearInterval(cfPollTimer);
+        cfPollTimer = null;
+      }
+    };
+
     const injectLoginHelperBar = async () => {
-      if (!loginWin || loginWin.isDestroyed()) return;
+      if (!loginWin || loginWin.isDestroyed()) {
+        cleanupCfPollTimer();
+        return;
+      }
+
+      // Check if current page is Cloudflare challenge (Turnstile / managed challenge)
+      const isCf = await isCloudflareChallenge(loginWin.webContents);
+      if (isCf) {
+        console.log('[Custom Login] Cloudflare challenge active — withholding toolbar injection to prevent challenge loop.');
+        try {
+          await loginWin.webContents.executeJavaScript(`(function() {
+            var existing = document.getElementById('__unsocial_relogin_bar');
+            if (existing) existing.remove();
+            if (document.body && document.body.style && document.body.style.marginTop === '44px') {
+              document.body.style.removeProperty('margin-top');
+            }
+          })()`).catch(() => {});
+        } catch (_) {}
+        try {
+          loginWin.setTitle(`Cloudflare Verification — ${siteLabel} (Complete check to continue)`);
+        } catch (_) {}
+
+        // Poll periodically while on challenge page so that as soon as the user completes Turnstile
+        // and Cloudflare redirects to the forum, the toolbar appears automatically.
+        if (!cfPollTimer) {
+          cfPollTimer = setInterval(async () => {
+            if (!loginWin || loginWin.isDestroyed()) {
+              cleanupCfPollTimer();
+              return;
+            }
+            const stillCf = await isCloudflareChallenge(loginWin.webContents);
+            if (!stillCf) {
+              cleanupCfPollTimer();
+              console.log('[Custom Login] Cloudflare challenge cleared! Injecting login helper bar.');
+              injectLoginHelperBar();
+            }
+          }, 1500);
+        }
+        return;
+      }
+
+      cleanupCfPollTimer();
+      try {
+        loginWin.setTitle(`Login — ${siteLabel}`);
+      } catch (_) {}
+
       const currentUrl = loginWin.webContents.getURL() || targetUrl;
       const cookies = await getSiteCookies(currentUrl);
       const loginInfo = await detectLoginState(loginWin.webContents);
@@ -2545,12 +2605,20 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
     };
 
     loginWin.webContents.on('did-finish-load', injectLoginHelperBar);
+    loginWin.webContents.on('did-navigate', injectLoginHelperBar);
     loginWin.webContents.on('did-navigate-in-page', injectLoginHelperBar);
+    loginWin.webContents.on('page-title-updated', (_event, title) => {
+      const t = (title || '').toLowerCase();
+      if (!t.includes('just a moment') && !t.includes('attention required! | cloudflare')) {
+        injectLoginHelperBar();
+      }
+    });
 
     let finalized = false;
     const finalizeLogin = async (isLoggedIn, shouldRefresh = true) => {
       if (finalized) return;
       finalized = true;
+      cleanupCfPollTimer();
       isCustomLoginWindowOpen = false;
       ipcMain.removeListener('custom-wizard-msg', onReloginMsg);
 
@@ -2623,6 +2691,7 @@ ipcMain.handle('open-custom-login', (_e, url, username) => {
     });
 
     loginWin.on('closed', async () => {
+      cleanupCfPollTimer();
       loginWin = null;
       isCustomLoginWindowOpen = false;
       if (finalized) return;
