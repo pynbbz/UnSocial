@@ -137,6 +137,7 @@
         <div class="add-modes">
           <button type="button" class="mode-pill active" data-mode="quick">⚡ Quick URL</button>
           <button type="button" class="mode-pill" data-mode="reddit">🔥 Reddit Builder</button>
+          <button type="button" class="mode-pill" data-mode="calendar">📅 Calendar</button>
           <button type="button" class="mode-pill" data-mode="custom">🌐 Custom Site</button>
         </div>
 
@@ -144,11 +145,11 @@
         <section id="mode-quick" class="mode-section active">
           <div class="card">
             <div class="card-title">Paste Any URL</div>
-            <p class="card-desc">Add Reddit subreddits, Twitter/X profiles, Instagram, Facebook pages, LinkedIn companies, or .txt changelogs.</p>
+            <p class="card-desc">Add Reddit subreddits, Telegram channels, Google/Outlook/.ics calendars, Twitter/X, Instagram, Facebook, LinkedIn, or .txt changelogs.</p>
             
             <form id="form-quick-add">
               <div class="input-with-button">
-                <input type="url" id="quick-url-input" class="input-field" placeholder="https://x.com/username or r/news" required spellcheck="false" />
+                <input type="text" id="quick-url-input" class="input-field" placeholder="https://... (.ics, Google/Outlook Calendar, Reddit, social)" required spellcheck="false" />
                 <button type="submit" id="btn-quick-add" class="btn btn-primary">
                   <span>Add</span>
                   <span class="spinner" style="display: none;"></span>
@@ -303,6 +304,36 @@
             </button>
 
             <div id="reddit-builder-status" class="status-msg" style="display:none;"></div>
+          </div>
+        </section>
+
+        <!-- Mode 2b: Calendar to RSS Feed -->
+        <section id="mode-calendar" class="mode-section" style="display: none;">
+          <div class="card">
+            <div class="card-header-with-badge">
+              <div class="card-title">Calendar to RSS Feed</div>
+              <span class="badge badge-success">Calendar / .ics</span>
+            </div>
+            <p class="card-desc">Convert public Google Calendars, Outlook Live / Microsoft 365 published calendars, or any <code>.ics</code> / <code>webcal://</code> link into an RSS feed for FreshRSS.</p>
+
+            <form id="form-calendar-add">
+              <div class="form-group">
+                <label for="remote-calendar-url">Calendar URL or Google Calendar ID</label>
+                <input type="text" id="remote-calendar-url" class="input-field" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" required spellcheck="false" />
+              </div>
+
+              <div class="form-group">
+                <label for="remote-calendar-alias">Feed Name (optional)</label>
+                <input type="text" id="remote-calendar-alias" class="input-field" placeholder="Leave blank to use calendar name" spellcheck="false" />
+              </div>
+
+              <button type="submit" id="btn-submit-calendar" class="btn btn-primary btn-block">
+                <span>Create Calendar Feed</span>
+                <span class="spinner" style="display: none;"></span>
+              </button>
+            </form>
+
+            <div id="calendar-builder-status" class="status-msg" style="display:none;"></div>
           </div>
         </section>
 

@@ -289,6 +289,7 @@
     switch (platform) {
       case 'telegram': return '✈️';
       case 'reddit': return '🔥';
+      case 'calendar': return '📅';
       case 'twitter': return '🐦';
       case 'instagram': return '📷';
       case 'facebook': return '👥';
@@ -304,6 +305,7 @@
     switch (p) {
       case 'telegram': return 'Telegram';
       case 'reddit': return 'Reddit';
+      case 'calendar': return 'Calendar';
       case 'twitter': return 'Twitter';
       case 'facebook': return 'Facebook';
       case 'linkedin': return 'LinkedIn';
@@ -376,7 +378,7 @@
 
     // 2. Group by category
     const groups = {};
-    const groupOrder = ['Telegram', 'Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
+    const groupOrder = ['Telegram', 'Reddit', 'Calendar', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
     for (const feed of searchedFeeds) {
       const cat = getFeedCategory(feed);
       if (!groups[cat]) groups[cat] = [];
@@ -481,7 +483,7 @@
                 </div>
                 <div class="feed-name-block">
                   <div class="feed-alias">Editing: ${escapeHtml(alias)}</div>
-                  <div class="feed-handle">${plat === 'reddit' ? 'r/' : plat === 'custom' ? '' : '@'}${escapeHtml(feed.username)}</div>
+                  <div class="feed-handle">${plat === 'reddit' ? 'r/' : (plat === 'custom' || plat === 'calendar' || plat === 'txt') ? '' : '@'}${escapeHtml(feed.username)}</div>
                 </div>
               </div>
             </div>
@@ -536,10 +538,10 @@
               </div>
               <div class="feed-name-block">
                 <div class="feed-alias">${escapeHtml(alias)}</div>
-                <div class="feed-handle">${plat === 'reddit' ? 'r/' : plat === 'custom' ? '' : '@'}${escapeHtml(feed.username)}</div>
+                <div class="feed-handle">${plat === 'reddit' ? 'r/' : (plat === 'custom' || plat === 'calendar' || plat === 'txt') ? '' : '@'}${escapeHtml(feed.username)}</div>
               </div>
             </div>
-            <span class="badge ${count > 0 ? 'badge-success' : ''}">${count} items</span>
+            <span class="badge ${count > 0 ? 'badge-success' : ''}">${count} ${plat === 'calendar' ? 'events' : 'items'}</span>
           </div>
 
           <div class="feed-url-row">
@@ -798,6 +800,64 @@
       spinner.style.display = 'none';
     }
   });
+
+  // ── Calendar Builder Logic ────────────────────────────────────────────────
+  const formCalendarAdd = document.getElementById('form-calendar-add');
+  const calendarUrlInput = document.getElementById('calendar-url-input');
+  const calendarCustomAlias = document.getElementById('calendar-custom-alias');
+  const calendarBuilderStatus = document.getElementById('calendar-builder-status');
+
+  if (formCalendarAdd) {
+    formCalendarAdd.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (calendarBuilderStatus) calendarBuilderStatus.style.display = 'none';
+
+      const rawUrl = calendarUrlInput ? calendarUrlInput.value.trim() : '';
+      const alias = calendarCustomAlias ? calendarCustomAlias.value.trim() : '';
+      if (!rawUrl) return;
+
+      const btn = document.getElementById('btn-submit-calendar');
+      const spanText = btn.querySelector('span:first-child');
+      const spinner = btn.querySelector('.spinner');
+
+      btn.disabled = true;
+      spanText.style.display = 'none';
+      spinner.style.display = 'inline-block';
+
+      try {
+        const res = await api('/api/feed/add', {
+          method: 'POST',
+          body: JSON.stringify({
+            targetUrl: rawUrl,
+            url: rawUrl,
+            alias,
+            platform: 'calendar',
+          }),
+        });
+
+        if (calendarUrlInput) calendarUrlInput.value = '';
+        if (calendarCustomAlias) calendarCustomAlias.value = '';
+        if (calendarBuilderStatus) {
+          calendarBuilderStatus.className = 'status-msg success';
+          calendarBuilderStatus.innerHTML = `✓ Calendar feed generated! <br><code style="font-size:12px;word-break:break-all;">${escapeHtml(res.rssUrl || '')}</code>`;
+          calendarBuilderStatus.style.display = 'block';
+        }
+
+        showToast('Calendar feed added!');
+        loadFeeds();
+      } catch (err) {
+        if (calendarBuilderStatus) {
+          calendarBuilderStatus.className = 'status-msg error';
+          calendarBuilderStatus.textContent = err.message;
+          calendarBuilderStatus.style.display = 'block';
+        }
+      } finally {
+        btn.disabled = false;
+        spanText.style.display = 'inline';
+        spinner.style.display = 'none';
+      }
+    });
+  }
 
   // ── Reddit Builder Logic ──────────────────────────────────────────────────
   redditTabs.forEach((tab) => {

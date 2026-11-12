@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -97,8 +97,9 @@ const { scrapeLinkedInProfile } = require('./scraper-linkedin');
 const { scrapeTxtFile } = require('./scraper-txt');
 const { scrapeReddit, extractSubredditOrUser } = require('./scraper-reddit');
 const { scrapeTelegramChannel, parseTelegramInput, listTelegramChannels } = require('./scraper-telegram');
+const { scrapeCalendar, parseCalendarInput } = require('./scraper-calendar');
 const { startCustomWizard, scrapeCustomSiteHeadless, getSiteCookies, clearSiteCookiesAndStorage, getDomainPartsFromUrl, detectLoginState, isStrictAuthCookieName, isPhpBBSite, isCloudflareChallenge, DETECT_LOGIN_STATE_JS } = require('./scraper-custom');
-const { generateFeed } = require('./rss-generator');
+const { generateFeed, getFeedDir } = require('./rss-generator');
 const { normalizeFeedPublicBaseUrlInput, resolveFeedBaseUrl } = require('./feed-url-base');
 const { getRealisticUserAgent } = require('./user-agent');
 const tunnel = require('./tunnel');
@@ -429,6 +430,7 @@ async function refreshOldestFeed() {
     else if (platform === 'txt') profileData = await withTimeout(scrapeTxtFile(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'reddit') profileData = await withTimeout(scrapeReddit(feed.fullUrl || feed.url), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'telegram') profileData = await withTimeout(scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) }), SCRAPE_TIMEOUT_MS, scrapeLabel);
+    else if (platform === 'calendar') profileData = await withTimeout(scrapeCalendar(feed, { feedDir: getFeedDir() }), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else if (platform === 'custom') profileData = await withTimeout(scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount, { usesLogin: Boolean(feed.usesLogin) }), SCRAPE_TIMEOUT_MS, scrapeLabel);
     else profileData = await withTimeout(scrapeInstagramProfile(feed.username), SCRAPE_TIMEOUT_MS, scrapeLabel);
 
@@ -649,6 +651,7 @@ app.whenReady().then(async () => {
               else if (plat === 'txt') profileData = await scrapeTxtFile(feed.fullUrl || feed.url);
               else if (plat === 'reddit') profileData = await scrapeReddit(feed.fullUrl || feed.url);
               else if (plat === 'telegram') profileData = await scrapeTelegramChannel(feed, { telegramLoggedIn: Boolean(store.get('telegramLoggedIn')) });
+              else if (plat === 'calendar') profileData = await scrapeCalendar(feed, { feedDir: getFeedDir() });
               else if (plat === 'custom') profileData = await scrapeCustomSiteHeadless(feed.fullUrl, feed.selector, feed.alias || feed.username, feed.scrollSelector, feed.scrollCount, { usesLogin: Boolean(feed.usesLogin) });
               else profileData = await scrapeInstagramProfile(feed.username);
               const fk = (feed.feedKey || feed.username).replace(/\//g, '-');
@@ -1686,6 +1689,26 @@ ipcMain.handle('list-telegram-channels', async () => {
   return await listTelegramChannels();
 });
 
+// Calendar helpers
+ipcMain.handle('parse-calendar-url', (_e, input) => {
+  return parseCalendarInput(input, { forceCalendar: true });
+});
+
+ipcMain.handle('pick-calendar-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title: 'Select iCalendar (.ics) File',
+    properties: ['openFile'],
+    filters: [
+      { name: 'iCalendar Files (.ics)', extensions: ['ics', 'ical', 'ifb', 'vcs'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
 // Force reset: clear ALL cookies + storage for a platform (nuclear option)
 ipcMain.handle('force-reset-platform', async (_e, platform) => {
   const domainMap = {
@@ -1735,9 +1758,12 @@ ipcMain.handle('get-feeds', async () => {
 
 async function addFeedCore(input) {
   let parsed;
+  const hasExplicitAlias = Boolean(typeof input === 'object' && input !== null && input.alias && String(input.alias).trim());
   if (typeof input === 'object' && input !== null) {
     const rawUrl = (input.targetUrl || input.fullUrl || input.url || '').trim();
-    if (input.platform === 'reddit' || rawUrl.includes('reddit.com') || /^\/??(?:r|u|user)\//i.test(rawUrl)) {
+    if (input.platform === 'calendar') {
+      parsed = parseCalendarInput(input, { forceCalendar: true });
+    } else if (input.platform === 'reddit' || rawUrl.includes('reddit.com') || /^\/??(?:r|u|user)\//i.test(rawUrl)) {
       const fromUrl = parseRedditInput(rawUrl) || {};
       const username = input.username || fromUrl.username || 'r-reddit-feed';
       const fullUrl = rawUrl || fromUrl.fullUrl || '';
@@ -1754,12 +1780,13 @@ async function addFeedCore(input) {
       parsed = input;
     } else {
       parsed = parseProfileInput(rawUrl || input);
+      if (parsed && input.alias) parsed.alias = input.alias;
     }
   } else {
     parsed = parseProfileInput(input);
   }
 
-  if (!parsed) throw new Error('Invalid URL or username. Supported: Telegram, Reddit, Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
+  if (!parsed) throw new Error('Invalid URL or username. Supported: Telegram, Reddit, Calendar (.ics / Google / Outlook), Instagram, Twitter/X, Facebook, LinkedIn, any website URL, or .txt URLs');
 
   let { username, platform } = parsed;
 
@@ -1786,6 +1813,8 @@ async function addFeedCore(input) {
     profileData = await scrapeTxtFile(parsed.fullUrl);
   } else if (platform === 'reddit') {
     profileData = await scrapeReddit(parsed.fullUrl);
+  } else if (platform === 'calendar') {
+    profileData = await scrapeCalendar(parsed, { feedDir: getFeedDir() });
   } else if (platform === 'telegram') {
     profileData = await scrapeTelegramChannel(parsed, {
       telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
@@ -1805,12 +1834,14 @@ async function addFeedCore(input) {
     throw new Error(
       platform === 'txt'
         ? `Found no entries in ${parsed.fullUrl}. Make sure the file is a valid changelog.`
-        : platform === 'reddit'
-          ? `Found no posts for ${parsed.alias || username} on Reddit. Make sure the subreddit exists or check your search/sort options.`
-          : platform === 'telegram'
-            ? `Found no posts for ${parsed.alias || username} on Telegram. If this is a private channel, make sure you are logged into Telegram.`
-            : `Found no posts for @${username} on ${platform}. ` +
-              'Make sure you are logged in and the profile is accessible.'
+        : platform === 'calendar'
+          ? `Found no events in calendar (${parsed.fullUrl}). Make sure the calendar has events and is publicly accessible.`
+          : platform === 'reddit'
+            ? `Found no posts for ${parsed.alias || username} on Reddit. Make sure the subreddit exists or check your search/sort options.`
+            : platform === 'telegram'
+              ? `Found no posts for ${parsed.alias || username} on Telegram. If this is a private channel, make sure you are logged into Telegram.`
+              : `Found no posts for @${username} on ${platform}. ` +
+                'Make sure you are logged in and the profile is accessible.'
     );
   }
 
@@ -1826,6 +1857,7 @@ async function addFeedCore(input) {
     linkedin: isOrg ? `https://www.linkedin.com/${username}` : `https://www.linkedin.com/in/${username}`,
     txt: parsed.fullUrl || (typeof input === 'string' ? input : ''),
     reddit: parsed.fullUrl || (typeof input === 'string' ? input : ''),
+    calendar: profileData.siteUrl || parsed.siteUrl || parsed.fullUrl || (typeof input === 'string' ? input : ''),
     telegram: isPrivateTg
       ? `https://t.me/${username}`
       : `https://t.me/s/${username}`,
@@ -1841,6 +1873,7 @@ async function addFeedCore(input) {
     : null;
 
   const defaultAlias =
+    (platform === 'calendar' && !hasExplicitAlias && profileData.fullName ? profileData.fullName : null) ||
     parsed.alias ||
     (platform === 'telegram' && isPrivateTg && profileData.fullName ? profileData.fullName : username);
 
@@ -1851,8 +1884,11 @@ async function addFeedCore(input) {
     platform,
     isPrivate: platform === 'telegram' ? isPrivateTg : undefined,
     chatId: platform === 'telegram' ? (profileData.chatId || parsed.chatId || null) : undefined,
+    calendarProvider: platform === 'calendar' ? (profileData.calendarProvider || parsed.calendarProvider || 'ics') : undefined,
+    calendarProviderLabel: platform === 'calendar' ? (profileData.calendarProviderLabel || parsed.calendarProviderLabel || 'Calendar') : undefined,
+    siteUrl: platform === 'calendar' ? (profileData.siteUrl || parsed.siteUrl || parsed.fullUrl) : undefined,
     subTab: parsed.subTab || null,
-    fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' || platform === 'telegram' ? profileUrls[platform] : null),
+    fullUrl: parsed.fullUrl || (platform === 'txt' || platform === 'reddit' || platform === 'telegram' || platform === 'calendar' ? profileUrls[platform] : null),
     alias: defaultAlias,
     directExternalLink: Boolean(parsed.directExternalLink),
     filterKeywords: parsed.filterKeywords || [],
@@ -2206,6 +2242,9 @@ async function refreshFeedCore(username, platform) {
       profileData = await scrapeTelegramChannel(feedEntry || username, {
         telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
       });
+    } else if (platform === 'calendar') {
+      const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'calendar');
+      profileData = await scrapeCalendar(feedEntry || username, { feedDir: getFeedDir() });
     } else if (platform === 'custom') {
       const feedEntry = store.get('feeds').find((f) => f.username === username && f.platform === 'custom');
       profileData = await scrapeCustomSiteHeadless(
@@ -2316,6 +2355,8 @@ async function refreshAllCore() {
         profileData = await scrapeTelegramChannel(feed, {
           telegramLoggedIn: Boolean(store.get('telegramLoggedIn')),
         });
+      } else if (platform === 'calendar') {
+        profileData = await scrapeCalendar(feed, { feedDir: getFeedDir() });
       } else if (platform === 'custom') {
         profileData = await scrapeCustomSiteHeadless(
           feed.fullUrl,
@@ -2813,7 +2854,7 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
     let fileCount = 0;
 
     for (const [category, feeds] of Object.entries(groups)) {
-      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Telegram': 'telegram', 'Reddit': 'reddit', 'Text': 'txt', 'Custom': 'custom' };
+      const platformMap = { 'Instagram': 'instagram', 'Twitter': 'twitter', 'Facebook': 'facebook', 'LinkedIn': 'linkedin', 'Telegram': 'telegram', 'Reddit': 'reddit', 'Calendar': 'calendar', 'Text': 'txt', 'Custom': 'custom' };
       const platformUrlBase = {
         'Instagram': 'https://www.instagram.com/',
         'Twitter': 'https://x.com/',
@@ -2821,6 +2862,7 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
         'LinkedIn': 'https://www.linkedin.com/in/',
         'Telegram': 'https://t.me/',
         'Reddit': 'https://www.reddit.com/',
+        'Calendar': '',
         'Text': '',
         'Custom': '',
       };
@@ -2830,8 +2872,8 @@ ipcMain.handle('export-opml', (_e, groups, tunnelDomain) => {
         const feedKey = (feed.feedKey || feed.username).replace(/\//g, '-');
         const xmlUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
         const isOrg = feed.username.startsWith('company/') || feed.username.startsWith('showcase/') || feed.username.startsWith('school/');
-        const htmlUrl = (feed.platform === 'txt' || feed.platform === 'custom' || feed.platform === 'reddit' || feed.platform === 'telegram')
-          ? (feed.fullUrl || feed.url || `${platformUrlBase[category] || ''}${feed.username}`)
+        const htmlUrl = (feed.platform === 'txt' || feed.platform === 'custom' || feed.platform === 'reddit' || feed.platform === 'telegram' || feed.platform === 'calendar')
+          ? (feed.siteUrl || feed.fullUrl || feed.url || `${platformUrlBase[category] || ''}${feed.username}`)
           : feed.platform === 'linkedin'
             ? (isOrg ? `https://www.linkedin.com/${feed.username}/` : `https://www.linkedin.com/in/${feed.username}/`)
             : `${platformUrlBase[category] || ''}${feed.username}/`;
@@ -3136,6 +3178,10 @@ function parseProfileInput(input) {
   // Reddit URL or shorthand
   const redditParsed = parseRedditInput(input);
   if (redditParsed) return redditParsed;
+
+  // Calendar URL (.ics, webcal://, Google Calendar public/embed/share URL, Outlook Live/365 published calendar, or local .ics file)
+  const calendarParsed = parseCalendarInput(input);
+  if (calendarParsed) return calendarParsed;
 
   // Bare @username or username — default to Instagram
   const bare = input.replace(/^@/, '');

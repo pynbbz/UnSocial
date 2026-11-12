@@ -129,7 +129,7 @@
         <input
           type="text"
           id="input-url"
-          placeholder="Enter any URL — Telegram (t.me/...), Reddit, social media, website, or .txt…"
+          placeholder="Enter any URL — Telegram (t.me/...), Reddit, Calendar (.ics / Google / Outlook), social media, website, or .txt…"
           autocomplete="off"
         />
         <button id="btn-add" class="btn btn-primary btn-icon-action" title="Add feed" aria-label="Add feed">
@@ -156,6 +156,15 @@
             <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.692-1.653-1.123-2.678-1.799-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.139-5.062 3.345-.479.329-.913.489-1.302.481-.428-.009-1.252-.242-1.865-.44-.751-.245-1.349-.374-1.297-.789.027-.216.324-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.015 3.333-1.386 4.025-1.627 4.477-1.635.099-.002.321.023.465.141.121.1.154.234.17.331.015.098.034.321.015.496z"/>
           </svg>
           <span>+ Telegram</span>
+        </button>
+        <button type="button" id="btn-open-calendar-modal" class="btn btn-outline btn-calendar-trigger" title="Add Google Calendar, Outlook Live/365, or .ics Calendar feed" aria-label="Add Calendar feed">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <span>+ Calendar</span>
         </button>
         <div class="add-controls">
           <button id="btn-blur-toggle" class="btn btn-outline btn-icon-action" title="Blur URLs" aria-label="Blur URLs" data-state="off">
@@ -744,6 +753,101 @@
             <button type="button" class="btn btn-outline" id="btn-cancel-telegram-modal">Cancel</button>
             <button type="button" class="btn btn-primary btn-reddit-submit" id="btn-submit-telegram-modal">
               <span class="btn-text">Add Telegram Feed</span>
+              <span class="btn-spinner" aria-hidden="true" style="display:none;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                </svg>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Calendar Feed Builder Modal (Google Calendar, Outlook Live/365, or .ics) -->
+    <div class="public-access-overlay" id="calendar-modal" style="display: none;">
+      <div class="public-access-page reddit-modal-page">
+        <div class="public-access-page-header">
+          <div class="public-access-title">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <h2>Calendar to RSS Feed</h2>
+          </div>
+          <button class="btn-close-overlay" id="btn-close-calendar-modal" title="Close">✕</button>
+        </div>
+
+        <div class="public-access-content reddit-modal-content">
+          <!-- Mode Tabs: Online Calendar (Google / Outlook / URL) vs Local .ics File -->
+          <div class="reddit-type-tabs" id="calendar-mode-tabs" role="tablist">
+            <button type="button" class="reddit-type-tab reddit-mode-tab is-active" data-mode="online">Online Calendar (Google / Outlook / .ics)</button>
+            <button type="button" class="reddit-type-tab reddit-mode-tab" data-mode="file">Local .ics File</button>
+          </div>
+
+          <!-- Online Calendar View -->
+          <div class="reddit-mode-view" id="calendar-view-online">
+            <div class="reddit-form-group">
+              <label for="calendar-url-input">Calendar URL or Google Calendar ID:</label>
+              <input
+                type="text"
+                id="calendar-url-input"
+                class="reddit-input"
+                placeholder="https://calendar.google.com/calendar/ical/.../basic.ics or Outlook .ics URL"
+                autocomplete="off"
+              />
+              <div class="reddit-input-hints" style="margin-top: 8px; line-height: 1.5;">
+                <span class="subtle">
+                  • <strong>Google Calendar:</strong> Paste the <em>Public address in iCal format</em> (<code>.../basic.ics</code>), <em>Public URL to this calendar</em> (<code>.../embed?src=...</code>), <em>Shareable link</em> (<code>?cid=...</code>), <em>Secret address in iCal format</em>, or a public Calendar ID (e.g. <code>en.usa#holiday@group.v.calendar.google.com</code>).<br/>
+                  • <strong>Outlook Live / Microsoft 365:</strong> In <em>Settings → Calendar → Shared calendars → Publish a calendar</em>, paste the <strong>ICS</strong> (or HTML) link.<br/>
+                  • <strong>Any iCalendar feed:</strong> Paste any <code>https://.../*.ics</code> or <code>webcal://...</code> URL.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Local .ics File View -->
+          <div class="reddit-mode-view" id="calendar-view-file" style="display: none;">
+            <div class="reddit-form-group">
+              <label for="calendar-file-input">Local .ics File Path:</label>
+              <div style="display: flex; gap: 8px;">
+                <input
+                  type="text"
+                  id="calendar-file-input"
+                  class="reddit-input"
+                  style="flex: 1;"
+                  placeholder="/path/to/calendar.ics"
+                  autocomplete="off"
+                />
+                <button type="button" class="btn btn-outline" id="btn-browse-calendar-file" style="white-space: nowrap;">📂 Browse…</button>
+              </div>
+              <div class="reddit-input-hints" style="margin-top: 6px;">
+                <span class="subtle">Select a local <code>.ics</code> file on your computer. When the file is updated on disk, UnSocial will pick up the new events on refresh.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Common Options -->
+          <div class="reddit-common-section">
+            <div class="reddit-form-group">
+              <label for="calendar-custom-alias">Feed Title / Alias (optional):</label>
+              <input type="text" id="calendar-custom-alias" class="reddit-input" placeholder="Leave blank to use calendar's name automatically" autocomplete="off" />
+            </div>
+
+            <div class="reddit-preview-card" id="calendar-preview-card" style="display: none;">
+              <div class="reddit-preview-label">Resolved Calendar Source:</div>
+              <div class="reddit-preview-url" id="calendar-preview-url"></div>
+            </div>
+
+            <div id="calendar-modal-error" class="add-error" style="color:var(--danger, #ff4d4f); font-size: 13px; display:none;"></div>
+          </div>
+
+          <div class="reddit-modal-actions">
+            <button type="button" class="btn btn-outline" id="btn-cancel-calendar-modal">Cancel</button>
+            <button type="button" class="btn btn-primary btn-reddit-submit" id="btn-submit-calendar-modal">
+              <span class="btn-text">Add Calendar Feed</span>
               <span class="btn-spinner" aria-hidden="true" style="display:none;">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                   <path d="M21 12a9 9 0 1 1-2.64-6.36"/>

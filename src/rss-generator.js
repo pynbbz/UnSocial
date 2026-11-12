@@ -66,6 +66,11 @@ async function generateFeed(username, profileData, store, platform) {
         ? 'Telegram Private Channel'
         : 'Telegram',
     },
+    calendar: {
+      siteUrl: profileData.siteUrl || profileData.fullUrl || '',
+      favicon: 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png',
+      label: profileData.calendarProviderLabel || 'Calendar',
+    },
   };
 
   const meta = platformMeta[platform] || platformMeta.instagram;
@@ -74,7 +79,7 @@ async function generateFeed(username, profileData, store, platform) {
   const feedKey = profileData.feedKey || username.replace(/[\/\\?%*:|"<>]/g, '-');
   const selfUrl = `${feedBase}/feed/${feedKey}`;
 
-  const feedTitle = platform === 'reddit'
+  const feedTitle = platform === 'reddit' || platform === 'calendar'
     ? (profileData.alias || profileData.fullName || username)
     : `${profileData.fullName || username} (@${username}) – ${meta.label}`;
 
@@ -92,6 +97,9 @@ async function generateFeed(username, profileData, store, platform) {
       alias: profileData.alias,
       feedKey,
       directExternalLink: profileData.directExternalLink,
+      calendarProvider: profileData.calendarProvider,
+      calendarProviderLabel: profileData.calendarProviderLabel,
+      eventFirstSeenMap: profileData.eventFirstSeenMap,
       posts: profileData.posts || []
     };
     fs.writeFileSync(dataPath, JSON.stringify(dataToSave), 'utf-8');
@@ -125,28 +133,34 @@ async function generateFeed(username, profileData, store, platform) {
     return true;
   });
 
+  const validTimestamps = filteredPosts
+    .map(p => p.timestamp ? new Date(p.timestamp).getTime() : NaN)
+    .filter(ms => !isNaN(ms));
+  const feedUpdated = validTimestamps.length > 0
+    ? new Date(Math.max(...validTimestamps))
+    : new Date();
+
   const feed = new Feed({
     title: feedTitle,
     description: profileData.biography || `${meta.label} posts from ${username}`,
-    id: siteUrl,
-    link: siteUrl,
+    id: siteUrl || selfUrl,
+    link: siteUrl || selfUrl,
     language: 'en',
     image: meta.favicon,
     favicon: meta.favicon,
-    updated: filteredPosts.length
-      ? new Date(filteredPosts[0].timestamp)
-      : new Date(),
+    updated: feedUpdated,
     feedLinks: {
       rss: selfUrl,
       atom: `${selfUrl}?format=atom`,
     },
     author: {
       name: profileData.fullName || username,
-      link: siteUrl,
+      link: siteUrl || selfUrl,
     },
   });
 
-  for (let i = 0; i < Math.min(filteredPosts.length, 25); i++) {
+  const maxItems = platform === 'calendar' ? 50 : 25;
+  for (let i = 0; i < Math.min(filteredPosts.length, maxItems); i++) {
     const post = filteredPosts[i];
     const rawCaption = post.caption || '';
     const isAiGuess = isAccessibilityCaption(rawCaption);
@@ -173,8 +187,10 @@ async function generateFeed(username, profileData, store, platform) {
     const statsHtml = `<p><small>${authorLine}${platform === 'reddit' ? '🔺' : '❤️'} ${formattedLikes} · 💬 ${formattedComments}</small></p>`;
 
     const isDirectExternal = Boolean(profileData.directExternalLink && post.externalUrl && post.externalUrl !== post.permalink);
-    const primaryLink = isDirectExternal ? post.externalUrl : (post.permalink || siteUrl);
-    const primaryId = post.permalink || `${siteUrl}#${post.id || i}`;
+    const primaryLink = isDirectExternal ? post.externalUrl : (post.permalink || siteUrl || selfUrl);
+    const primaryId = (platform === 'calendar' && post.id)
+      ? post.id
+      : (post.permalink || `${siteUrl || selfUrl}#${post.id || i}`);
 
     const ytId = extractYouTubeId(post.externalUrl || post.contentHref);
 
@@ -238,18 +254,22 @@ async function generateFeed(username, profileData, store, platform) {
       }
     }
 
+    const itemContent = (platform === 'calendar' && post.contentHtml)
+      ? post.contentHtml
+      : `${imageHtml}${videoHtml}${audioHtml}${telegramMediaActionHtml}${externalMediaHtml}${captionHtml}${statsHtml}`;
+
     feed.addItem({
       title,
       id: primaryId,
       link: primaryLink,
       description: truncate(displayCaption || title, 300),
-      content: `${imageHtml}${videoHtml}${audioHtml}${telegramMediaActionHtml}${externalMediaHtml}${captionHtml}${statsHtml}`,
+      content: itemContent,
       date: new Date(post.timestamp),
       image: postImg || undefined,
       author: [
         {
           name: cleanAuthor ? `u/${cleanAuthor}` : (profileData.fullName || username),
-          link: cleanAuthor ? `https://www.reddit.com/user/${cleanAuthor}` : siteUrl,
+          link: cleanAuthor ? `https://www.reddit.com/user/${cleanAuthor}` : (siteUrl || selfUrl),
         },
       ],
     });

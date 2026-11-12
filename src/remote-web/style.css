@@ -1003,6 +1003,7 @@ body {
 .feed-platform-icon.facebook { color: var(--accent-facebook); }
 .feed-platform-icon.linkedin { color: var(--accent-linkedin); }
 .feed-platform-icon.custom { color: var(--accent-green); }
+.feed-platform-icon.calendar { color: #10b981; }
 .feed-platform-icon.txt { color: #f59e0b; }
 
 .feed-name-block {

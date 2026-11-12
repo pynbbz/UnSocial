@@ -1549,6 +1549,41 @@ body {
   box-shadow: 0 0 0 1px #26A5E4;
 }
 
+.btn-calendar-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #10b981;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-calendar-trigger:hover {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: #10b981;
+  color: #34d399;
+}
+
+#calendar-modal .reddit-type-tab.is-active,
+#calendar-modal .btn-reddit-submit {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+}
+
+#calendar-modal .btn-reddit-submit:hover {
+  background: #059669;
+  border-color: #059669;
+}
+
+#calendar-modal .reddit-input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px #10b981;
+}
+
 .reddit-modal-page {
   max-width: 620px;
 }

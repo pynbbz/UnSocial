@@ -144,9 +144,10 @@ let activeGroup = null;
   await window.api.checkRedditLogin();
   await window.api.checkTelegramLogin();
 
-  // Setup Reddit & Telegram modals
+  // Setup Reddit, Telegram & Calendar modals
   setupRedditModal();
   setupTelegramModal();
+  setupCalendarModal();
 
   // Load feeds
   await renderFeeds();
@@ -1120,11 +1121,12 @@ async function renderFeeds() {
 
   // Group feeds by category
   const groups = {};
-  const groupOrder = ['Telegram', 'Reddit', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
+  const groupOrder = ['Telegram', 'Reddit', 'Calendar', 'Instagram', 'Twitter', 'Facebook', 'LinkedIn', 'Custom', 'Text'];
   for (const feed of filteredFeeds) {
     const platform = feed.platform || 'instagram';
     const category = platform === 'telegram' ? 'Telegram' :
       platform === 'reddit' ? 'Reddit' :
+      platform === 'calendar' ? 'Calendar' :
       platform === 'twitter' ? 'Twitter' :
       platform === 'facebook' ? 'Facebook' :
       platform === 'linkedin' ? 'LinkedIn' :
@@ -1237,8 +1239,8 @@ function buildFeedCard(feed) {
                               (platform === 'reddit' && !rdLoggedIn) ||
                               (isPrivateTgFeed && !tgLoggedIn) ||
                               customNeedsRelogin;
-    // txt and public telegram/custom feeds don't require login, so only mark stale for actual staleness, errors, or expired custom login
-    if (isStale || hasError || customHasError || (platformLoggedOut && platform !== 'txt')) {
+    // txt, calendar, and public telegram/custom feeds don't require login, so only mark stale for actual staleness, errors, or expired custom login
+    if (isStale || hasError || customHasError || (platformLoggedOut && platform !== 'txt' && platform !== 'calendar')) {
       card.classList.add('feed-stale');
     }
 
@@ -1249,21 +1251,24 @@ function buildFeedCard(feed) {
       ? 'https://telegram.org/img/apple-touch-icon.png'
       : platform === 'reddit'
         ? 'https://www.redditstatic.com/shreddit/assets/favicon/192x192.png'
-        : platform === 'twitter'
-          ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
-          : platform === 'facebook'
-            ? 'https://www.facebook.com/images/fb_icon_325x325.png'
-            : platform === 'linkedin'
-              ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
-              : platform === 'txt'
-                ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
-                : platform === 'custom'
-                  ? (customFavicon || customFallbackLogo)
-                  : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
+        : platform === 'calendar'
+          ? 'https://cdn-icons-png.flaticon.com/512/2693/2693507.png'
+          : platform === 'twitter'
+            ? 'https://abs.twimg.com/icons/apple-touch-icon-192x192.png'
+            : platform === 'facebook'
+              ? 'https://www.facebook.com/images/fb_icon_325x325.png'
+              : platform === 'linkedin'
+                ? 'https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png'
+                : platform === 'txt'
+                  ? 'https://cdn-icons-png.flaticon.com/512/337/337956.png'
+                  : platform === 'custom'
+                    ? (customFavicon || customFallbackLogo)
+                    : 'https://cdn-icons-png.flaticon.com/512/2111/2111463.png';
     const isGroup = feed.username.startsWith('groups/');
     const isEvent = feed.username.startsWith('events/') || feed.username === 'events';
     const platformLabel = platform === 'telegram' ? (isPrivateTgFeed ? 'Telegram Private' : 'Telegram') :
                           platform === 'reddit' ? 'Reddit' :
+                          platform === 'calendar' ? (feed.calendarProviderLabel || 'Calendar') :
                           platform === 'twitter' ? 'Twitter' :
                           platform === 'facebook' ? (isGroup ? 'FB Group' : isEvent ? 'FB Event' : 'Facebook') :
                           platform === 'linkedin' ? 'LinkedIn' :
@@ -1273,7 +1278,7 @@ function buildFeedCard(feed) {
     const tokenSuffix = tokenQueryString('?');
     const publicUrl = `https://${tunnelDomain}/feed/${feedKey}${tokenSuffix}`;
     const timeAgo = formatTimeAgo(feed.lastChecked);
-    const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt' || isPrivateTgFeed) ? '' : '@';
+    const userPrefix = (platform === 'reddit' || platform === 'custom' || platform === 'txt' || platform === 'calendar' || isPrivateTgFeed) ? '' : '@';
 
     const customLoginBadgeHtml = platform === 'custom'
       ? customNeedsRelogin
@@ -1319,7 +1324,7 @@ function buildFeedCard(feed) {
         </div>
         <div class="feed-card-body">
           <div class="feed-meta">
-            <span>${feed.postCount || 0} posts</span>
+            <span>${feed.postCount || 0} ${platform === 'calendar' ? 'events' : 'posts'}</span>
             <span>Updated ${timeAgo}</span>
           </div>
           <div class="feed-meta">
@@ -1785,6 +1790,7 @@ async function exportOpml() {
       const platform = feed.platform || 'instagram';
       const category = platform === 'telegram' ? 'Telegram' :
         platform === 'reddit' ? 'Reddit' :
+        platform === 'calendar' ? 'Calendar' :
         platform === 'twitter' ? 'Twitter' :
         platform === 'facebook' ? 'Facebook' :
         platform === 'linkedin' ? 'LinkedIn' :
@@ -2675,4 +2681,190 @@ function setupTelegramModal() {
     }
   });
 }
+
+// ── Calendar Feed Builder Modal ─────────────────────────────────────────
+
+const calendarModalOverlay = $('#calendar-modal');
+const btnOpenCalendarModal = $('#btn-open-calendar-modal');
+const btnCloseCalendarModal = $('#btn-close-calendar-modal');
+const btnCancelCalendarModal = $('#btn-cancel-calendar-modal');
+const btnSubmitCalendarModal = $('#btn-submit-calendar-modal');
+const calendarModeTabs = document.querySelectorAll('#calendar-mode-tabs .reddit-mode-tab');
+const calendarViewOnline = $('#calendar-view-online');
+const calendarViewFile = $('#calendar-view-file');
+const calendarUrlInput = $('#calendar-url-input');
+const calendarFileInput = $('#calendar-file-input');
+const btnBrowseCalendarFile = $('#btn-browse-calendar-file');
+const calendarCustomAlias = $('#calendar-custom-alias');
+const calendarPreviewCard = $('#calendar-preview-card');
+const calendarPreviewUrl = $('#calendar-preview-url');
+const calendarModalError = $('#calendar-modal-error');
+
+let activeCalendarTab = 'online';
+
+function switchCalendarTab(mode) {
+  activeCalendarTab = mode;
+  calendarModeTabs.forEach((tab) => {
+    tab.classList.toggle('is-active', tab.dataset.mode === mode);
+  });
+  if (calendarViewOnline) calendarViewOnline.style.display = mode === 'online' ? 'flex' : 'none';
+  if (calendarViewFile) calendarViewFile.style.display = mode === 'file' ? 'flex' : 'none';
+  if (calendarModalError) {
+    calendarModalError.style.display = 'none';
+    calendarModalError.textContent = '';
+  }
+  updateCalendarPreview();
+}
+
+async function updateCalendarPreview() {
+  if (!calendarPreviewCard || !calendarPreviewUrl) return;
+  const raw = activeCalendarTab === 'online'
+    ? (calendarUrlInput ? calendarUrlInput.value.trim() : '')
+    : (calendarFileInput ? calendarFileInput.value.trim() : '');
+
+  if (!raw) {
+    calendarPreviewCard.style.display = 'none';
+    calendarPreviewUrl.textContent = '';
+    return;
+  }
+
+  try {
+    const parsed = await window.api.parseCalendarUrl(raw);
+    if (parsed && parsed.fullUrl) {
+      calendarPreviewCard.style.display = '';
+      calendarPreviewUrl.textContent = `${parsed.calendarProviderLabel || 'Calendar'}: ${parsed.fullUrl}`;
+    } else {
+      calendarPreviewCard.style.display = 'none';
+    }
+  } catch (_) {
+    calendarPreviewCard.style.display = 'none';
+  }
+}
+
+function openCalendarModal() {
+  if (!calendarModalOverlay) return;
+  if (calendarModalError) {
+    calendarModalError.style.display = 'none';
+    calendarModalError.textContent = '';
+  }
+
+  const prefill = inputUrl ? inputUrl.value.trim() : '';
+  if (prefill && (prefill.endsWith('.ics') || prefill.includes('calendar.google.com') || prefill.includes('outlook.') || prefill.startsWith('webcal'))) {
+    if (prefill.startsWith('/') || prefill.startsWith('file://') || /^[a-zA-Z]:[\\/]/.test(prefill)) {
+      switchCalendarTab('file');
+      if (calendarFileInput) calendarFileInput.value = prefill;
+    } else {
+      switchCalendarTab('online');
+      if (calendarUrlInput) calendarUrlInput.value = prefill;
+    }
+  } else {
+    switchCalendarTab('online');
+  }
+
+  updateCalendarPreview();
+  calendarModalOverlay.style.display = 'flex';
+  setTimeout(() => {
+    if (activeCalendarTab === 'online' && calendarUrlInput) calendarUrlInput.focus();
+    else if (activeCalendarTab === 'file' && calendarFileInput) calendarFileInput.focus();
+  }, 80);
+}
+
+function closeCalendarModal() {
+  if (calendarModalOverlay) calendarModalOverlay.style.display = 'none';
+}
+
+function setupCalendarModal() {
+  if (!calendarModalOverlay) return;
+
+  btnOpenCalendarModal?.addEventListener('click', () => openCalendarModal());
+  btnCloseCalendarModal?.addEventListener('click', closeCalendarModal);
+  btnCancelCalendarModal?.addEventListener('click', closeCalendarModal);
+
+  calendarModalOverlay.addEventListener('click', (e) => {
+    if (e.target === calendarModalOverlay) closeCalendarModal();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && calendarModalOverlay.style.display !== 'none') {
+      closeCalendarModal();
+    }
+  });
+
+  calendarModeTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      switchCalendarTab(tab.dataset.mode);
+    });
+  });
+
+  calendarUrlInput?.addEventListener('input', () => updateCalendarPreview());
+  calendarFileInput?.addEventListener('input', () => updateCalendarPreview());
+
+  btnBrowseCalendarFile?.addEventListener('click', async () => {
+    try {
+      const filePath = await window.api.pickCalendarFile();
+      if (filePath && calendarFileInput) {
+        calendarFileInput.value = filePath;
+        updateCalendarPreview();
+      }
+    } catch (err) {
+      toast(err.message || 'Could not pick file', 'error');
+    }
+  });
+
+  btnSubmitCalendarModal?.addEventListener('click', async () => {
+    if (calendarModalError) {
+      calendarModalError.style.display = 'none';
+      calendarModalError.textContent = '';
+    }
+
+    const rawTarget = activeCalendarTab === 'online'
+      ? (calendarUrlInput ? calendarUrlInput.value.trim() : '')
+      : (calendarFileInput ? calendarFileInput.value.trim() : '');
+
+    if (!rawTarget) {
+      if (calendarModalError) {
+        calendarModalError.textContent = activeCalendarTab === 'online'
+          ? 'Please enter a Google Calendar URL/ID, Outlook Live/365 published calendar link, or .ics URL.'
+          : 'Please select or enter a path to a local .ics file.';
+        calendarModalError.style.display = 'block';
+      }
+      return;
+    }
+
+    const alias = (calendarCustomAlias ? calendarCustomAlias.value.trim() : '') || undefined;
+
+    btnSubmitCalendarModal.disabled = true;
+    const spinner = btnSubmitCalendarModal.querySelector('.btn-spinner');
+    const textSpan = btnSubmitCalendarModal.querySelector('.btn-text');
+    if (spinner) spinner.style.display = 'inline-block';
+    if (textSpan) textSpan.textContent = 'Adding Feed…';
+
+    try {
+      await window.api.addFeed({
+        url: rawTarget,
+        targetUrl: rawTarget,
+        alias,
+        platform: 'calendar',
+      });
+      closeCalendarModal();
+      if (calendarUrlInput) calendarUrlInput.value = '';
+      if (calendarFileInput) calendarFileInput.value = '';
+      if (calendarCustomAlias) calendarCustomAlias.value = '';
+      if (inputUrl) inputUrl.value = '';
+      await renderFeeds();
+      toast('Calendar feed added!', 'success');
+    } catch (err) {
+      if (calendarModalError) {
+        calendarModalError.textContent = err.message || 'Failed to add Calendar feed.';
+        calendarModalError.style.display = 'block';
+      }
+      toast(err.message || 'Failed to add Calendar feed', 'error');
+    } finally {
+      btnSubmitCalendarModal.disabled = false;
+      if (spinner) spinner.style.display = 'none';
+      if (textSpan) textSpan.textContent = 'Add Calendar Feed';
+    }
+  });
+}
+
 

@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('api', {
   logoutTelegram: () => ipcRenderer.invoke('logout-telegram'),
   listTelegramChannels: () => ipcRenderer.invoke('list-telegram-channels'),
 
+  // Calendar Features
+  parseCalendarUrl: (url) => ipcRenderer.invoke('parse-calendar-url', url),
+  pickCalendarFile: () => ipcRenderer.invoke('pick-calendar-file'),
+
 
   // Force reset (nuclear option — clears ALL data for a platform)
   forceResetPlatform: (platform) => ipcRenderer.invoke('force-reset-platform', platform),
